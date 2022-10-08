@@ -137,6 +137,7 @@ pub enum Brush {
     Solid(Color),
 }
 
+#[derive(Clone)]
 pub struct WgpuImage {}
 
 impl<'a> RenderContext for WgpuRenderContext<'a> {
@@ -390,11 +391,8 @@ impl<'a> RenderContext for WgpuRenderContext<'a> {
         self.renderer.queue.submit(Some(encoder.finish()));
         texture.present();
 
-        self.renderer
-            .local_pool
-            .spawner()
-            .spawn(self.renderer.staging_belt.borrow_mut().recall())
-            .expect("Recall staging belt");
+        self.renderer.staging_belt.borrow_mut().recall();
+
         self.renderer.local_pool.run_until_stalled();
 
         Ok(())

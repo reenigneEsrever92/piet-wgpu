@@ -49,7 +49,11 @@ pub struct WgpuRenderer {
 }
 
 impl WgpuRenderer {
-    pub fn new<W: raw_window_handle::HasRawWindowHandle>(window: &W) -> Result<Self, piet::Error> {
+    pub fn new<
+        W: raw_window_handle::HasRawWindowHandle + raw_window_handle::HasRawDisplayHandle,
+    >(
+        window: &W,
+    ) -> Result<Self, piet::Error> {
         let backend = wgpu::util::backend_bits_from_env().unwrap_or_else(wgpu::Backends::all);
         let instance = wgpu::Instance::new(backend);
         let surface = unsafe { instance.create_surface(window) };
@@ -68,7 +72,9 @@ impl WgpuRenderer {
         .map_err(|e| piet::Error::BackendError(Box::new(e)))?;
 
         let format = surface
-            .get_preferred_format(&adapter)
+            .get_supported_formats(&adapter)
+            .first()
+            .cloned()
             .ok_or(piet::Error::MissingFeature("no supported texture format"))?;
 
         let staging_belt = wgpu::util::StagingBelt::new(1024);
@@ -120,6 +126,7 @@ impl WgpuRenderer {
             width: size.width as u32,
             height: size.height as u32,
             present_mode: wgpu::PresentMode::Fifo,
+            alpha_mode: wgpu::CompositeAlphaMode::PreMultiplied,
         };
         self.surface.configure(&self.device, &sc_desc);
         let msaa_texture = self.device.create_texture(&wgpu::TextureDescriptor {

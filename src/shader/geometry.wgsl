@@ -1,50 +1,50 @@
 struct Primitive {
-    u_clip_rect: vec4<f32>;
-    u_transform_1: vec4<f32>;
-    u_blur_rect: vec4<f32>;
-    u_transform_2: vec2<f32>;
-    u_translate: vec2<f32>;
-    u_scale: vec2<f32>;
-    u_clip: f32;
-    u_blur_radius: f32;
+    u_clip_rect: vec4<f32>,
+    u_transform_1: vec4<f32>,
+    u_blur_rect: vec4<f32>,
+    u_transform_2: vec2<f32>,
+    u_translate: vec2<f32>,
+    u_scale: vec2<f32>,
+    u_clip: f32,
+    u_blur_radius: f32,
 };
 
 struct Globals {
-    u_resolution: vec2<f32>;
-    u_scale: f32;
+    u_resolution: vec2<f32>,
+    u_scale: f32,
 };
 
 struct Primitives {
-    data: array<Primitive>;
+    data: array<Primitive>,
 };
 
-[[group(0), binding(0)]] var<uniform> globals: Globals;
-[[group(0), binding(1)]] var font_sampler: sampler;
-[[group(0), binding(2)]] var font_tex: texture_2d<f32>;
-[[group(0), binding(3)]] var<storage> primitives: Primitives;
+@group(0) @binding(0) var<uniform> globals: Globals;
+@group(0) @binding(1) var font_sampler: sampler;
+@group(0) @binding(2) var font_tex: texture_2d<f32>;
+@group(0) @binding(3) var<storage> primitives: Primitives;
     
 struct VertexInput {
-    [[location(0)]] v_pos: vec2<f32>;
-    [[location(1)]] v_translate: vec2<f32>;
-    [[location(2)]] v_color: vec4<f32>;
-    [[location(3)]] v_tex: f32;
-    [[location(4)]] v_tex_pos: vec2<f32>;
-    [[location(5)]] v_primitive_id: u32;
+    @location(0) v_pos: vec2<f32>,
+    @location(1) v_translate: vec2<f32>,
+    @location(2) v_color: vec4<f32>,
+    @location(3) v_tex: f32,
+    @location(4) v_tex_pos: vec2<f32>,
+    @location(5) v_primitive_id: u32,
 };
 
 struct VertexOutput {
-    [[builtin(position)]] position: vec4<f32>;
-    [[location(0)]] color: vec4<f32>;
-    [[location(1)]] pos: vec2<f32>;
-    [[location(2)]] rect: vec4<f32>;
-    [[location(3)]] blur_radius: f32;
-    [[location(4)]] tex: f32;
-    [[location(5)]] tex_pos: vec2<f32>;
-    [[location(6)]] clip: f32;
-    [[location(7)]] clip_rect: vec4<f32>;
+    @builtin(position) position: vec4<f32>,
+    @location(0) color: vec4<f32>,
+    @location(1) pos: vec2<f32>,
+    @location(2) rect: vec4<f32>,
+    @location(3) blur_radius: f32,
+    @location(4) tex: f32,
+    @location(5) tex_pos: vec2<f32>,
+    @location(6) clip: f32,
+    @location(7) clip_rect: vec4<f32>,
 };
 
-[[stage(vertex)]]
+@vertex
 fn vs_main(input: VertexInput) -> VertexOutput {
     let primitive = primitives.data[input.v_primitive_id];
 
@@ -96,14 +96,14 @@ fn erf(x: vec4<f32>) -> vec4<f32> {
     return s - s / (r * r);
 }
 
-fn box_shadow(lower: vec2<f32>, upper: vec2<f32>, point: vec2<f32>, radius: f32) -> f32 {
-    var query: vec4<f32> = vec4<f32>(point - lower, point - upper);
+fn box_shadow(lower: vec2<f32>, upper: vec2<f32>, pt: vec2<f32>, radius: f32) -> f32 {
+    var query: vec4<f32> = vec4<f32>(pt - lower, pt - upper);
     var integral: vec4<f32> = 0.5 + 0.5 * erf(query * (sqrt(0.5) / radius));
     return (integral.z - integral.x) * (integral.w - integral.y);
 }
 
-[[stage(fragment)]]
-fn fs_main(input: VertexOutput) -> [[location(0)]] vec4<f32> {
+@fragment
+fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     var color: vec4<f32> = input.color;
     
     if (input.blur_radius > 0.0) {
