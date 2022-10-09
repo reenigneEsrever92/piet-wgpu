@@ -172,14 +172,6 @@ impl WgpuRenderer {
     }
 }
 
-pub struct Device {
-    // Since not all backends can support `Device: Sync`, make it non-Sync here to, for fewer
-    // portability surprises.
-    marker: std::marker::PhantomData<*const ()>,
-}
-
-unsafe impl Send for Device {}
-
 /// A struct provides a `RenderContext` and then can have its bitmap extracted.
 pub struct BitmapTarget<'a> {
     phantom: PhantomData<&'a ()>,
