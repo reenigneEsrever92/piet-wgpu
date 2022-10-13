@@ -12,37 +12,28 @@ use piet::kurbo::Size;
 pub use piet::*;
 pub use svg::Svg;
 use svg::SvgStore;
+use text::WgpuText;
 
 use std::{cell::RefCell, marker::PhantomData, rc::Rc};
 
 use context::{WgpuImage, WgpuRenderContext};
-use text::{WgpuText, WgpuTextLayout, WgpuTextLayoutBuilder};
 
 pub type Piet<'a> = WgpuRenderContext<'a>;
 
 pub type Brush = context::Brush;
 
-pub type PietText = WgpuText;
-
-pub type PietTextLayout = WgpuTextLayout;
-
-pub type PietTextLayoutBuilder = WgpuTextLayoutBuilder;
-
 pub type PietImage = WgpuImage;
 
 pub struct WgpuRenderer {
     instance: wgpu::Instance,
-    device: Rc<wgpu::Device>,
+    device: wgpu::Device,
     surface: wgpu::Surface,
     queue: wgpu::Queue,
     format: wgpu::TextureFormat,
     staging_belt: Rc<RefCell<wgpu::util::StagingBelt>>,
-    local_pool: futures::executor::LocalPool,
     msaa: wgpu::TextureView,
     size: Size,
     svg_store: SvgStore,
-
-    text: WgpuText,
 
     pipeline: pipeline::Pipeline,
     pub(crate) encoder: Rc<RefCell<Option<wgpu::CommandEncoder>>>,
@@ -78,7 +69,6 @@ impl WgpuRenderer {
             .ok_or(piet::Error::MissingFeature("no supported texture format"))?;
 
         let staging_belt = wgpu::util::StagingBelt::new(1024);
-        let local_pool = futures::executor::LocalPool::new();
 
         let msaa_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Multisampled frame descriptor"),
@@ -97,20 +87,17 @@ impl WgpuRenderer {
 
         let staging_belt = Rc::new(RefCell::new(staging_belt));
         let encoder = Rc::new(RefCell::new(None));
-        let device = Rc::new(device);
-        let text = WgpuText::new(device.clone(), staging_belt.clone(), encoder.clone());
-        let pipeline = pipeline::Pipeline::new(&device, format, &text.cache.borrow());
+        let device = device;
+        let pipeline = pipeline::Pipeline::new(&device, format, Size::ZERO);
 
         Ok(Self {
             instance,
             device,
             queue,
             surface,
-            text,
             size: Size::ZERO,
             format,
             staging_belt,
-            local_pool,
             msaa,
             pipeline,
             svg_store: SvgStore::new(),
@@ -148,11 +135,10 @@ impl WgpuRenderer {
 
     pub fn set_scale(&mut self, scale: f64) {
         self.pipeline.scale = scale;
-        self.text.cache.borrow_mut().scale = scale;
     }
 
     pub fn text(&self) -> WgpuText {
-        self.text.clone()
+        todo!()
     }
 
     pub(crate) fn ensure_encoder(&mut self) {

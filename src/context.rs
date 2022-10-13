@@ -6,7 +6,6 @@ use crate::{
     text::{WgpuText, WgpuTextLayout},
     WgpuRenderer,
 };
-use futures::task::SpawnExt;
 use lyon::lyon_tessellation::{
     BuffersBuilder, FillOptions, FillTessellator, FillVertex, StrokeOptions, StrokeTessellator,
     StrokeVertex, VertexBuffers,
@@ -333,7 +332,6 @@ impl<'a> RenderContext for WgpuRenderContext<'a> {
     fn draw_text(&mut self, layout: &Self::TextLayout, pos: impl Into<piet::kurbo::Point>) {
         let point: Point = pos.into();
         let translate = [point.x as f32, point.y as f32];
-        layout.draw_text(self, translate);
     }
 
     fn save(&mut self) -> Result<(), piet::Error> {
@@ -392,8 +390,6 @@ impl<'a> RenderContext for WgpuRenderContext<'a> {
         texture.present();
 
         self.renderer.staging_belt.borrow_mut().recall();
-
-        self.renderer.local_pool.run_until_stalled();
 
         Ok(())
     }

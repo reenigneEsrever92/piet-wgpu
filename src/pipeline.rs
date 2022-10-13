@@ -22,6 +22,7 @@ use pathfinder_geometry::vector::{Vector2F, Vector2I};
 use piet::kurbo::{Affine, Point, Rect, Size};
 use piet::{Color, FontFamily, FontWeight};
 use wgpu::util::DeviceExt;
+use wgpu::{TextureView, TextureViewDescriptor};
 
 const FONTS_DIR: Dir = include_dir!("./fonts");
 const DEFAULT_FONT: &[u8] = include_bytes!("../fonts/CascadiaCode-Regular.otf");
@@ -110,7 +111,7 @@ pub struct Pipeline {
 }
 
 impl Pipeline {
-    pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat, cache: &Cache) -> Self {
+    pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat, size: Size) -> Self {
         let globals_buffer_byte_size = std::mem::size_of::<Globals>() as u64;
         let supported_primitives = 1000;
         let primitives_buffer_byte_size =
@@ -202,6 +203,22 @@ impl Pipeline {
             ],
         });
 
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("wgpu_glyph::Cache"),
+            size: wgpu::Extent3d {
+                width: size.width as u32,
+                height: size.height as u32,
+                depth_or_array_layers: 1,
+            },
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R8Unorm,
+            usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
+            mip_level_count: 1,
+            sample_count: 1,
+        });
+
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Bind group"),
             layout: &bind_group_layout,
@@ -216,7 +233,9 @@ impl Pipeline {
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&cache.view),
+                    resource: wgpu::BindingResource::TextureView(
+                        &texture.create_view(&TextureViewDescriptor::default()),
+                    ),
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
