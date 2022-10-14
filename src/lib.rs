@@ -1,3 +1,4 @@
+mod cache;
 mod context;
 mod font;
 mod layer;
@@ -6,159 +7,339 @@ mod svg;
 mod text;
 mod transformation;
 
-use log::info;
-pub use piet::kurbo;
-use piet::kurbo::Size;
+pub use piet::kurbo::*;
 pub use piet::*;
-pub use svg::Svg;
-use svg::SvgStore;
-use text::WgpuText;
+use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 
-use std::{cell::RefCell, marker::PhantomData, rc::Rc};
+pub struct PietWgpu {
+    pub renderer: WgpuRenderer,
+}
 
-use context::{WgpuImage, WgpuRenderContext};
-
-pub type Piet<'a> = WgpuRenderContext<'a>;
-
-pub type Brush = context::Brush;
-
-pub type PietImage = WgpuImage;
+impl PietWgpu {
+    pub fn new<W: HasRawWindowHandle + HasRawDisplayHandle>(
+        window: &W,
+        size: Size,
+        scale: f64,
+    ) -> Self {
+        let renderer = WgpuRenderer::new(window, size, scale).unwrap();
+        Self { renderer }
+    }
+}
 
 pub struct WgpuRenderer {
     instance: wgpu::Instance,
-    device: wgpu::Device,
     surface: wgpu::Surface,
+    adapter: wgpu::Adapter,
+    device: wgpu::Device,
     queue: wgpu::Queue,
-    format: wgpu::TextureFormat,
-    staging_belt: Rc<RefCell<wgpu::util::StagingBelt>>,
-    msaa: wgpu::TextureView,
+    surface_config: wgpu::SurfaceConfiguration,
     size: Size,
-    svg_store: SvgStore,
-
-    pipeline: pipeline::Pipeline,
-    pub(crate) encoder: Rc<RefCell<Option<wgpu::CommandEncoder>>>,
+    scale: f64,
 }
+static_assertions::assert_impl_all!(WgpuRenderer: Send, Sync);
 
 impl WgpuRenderer {
-    pub fn new<
-        W: raw_window_handle::HasRawWindowHandle + raw_window_handle::HasRawDisplayHandle,
-    >(
+    fn new<W: HasRawWindowHandle + HasRawDisplayHandle>(
         window: &W,
+        size: Size,
+        scale: f64,
     ) -> Result<Self, piet::Error> {
-        let backend = wgpu::util::backend_bits_from_env().unwrap_or_else(wgpu::Backends::all);
-        let instance = wgpu::Instance::new(backend);
+        let instance = wgpu::Instance::new(wgpu::Backends::all());
         let surface = unsafe { instance.create_surface(window) };
         let adapter =
             futures::executor::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
+                power_preference: wgpu::PowerPreference::default(),
                 compatible_surface: Some(&surface),
                 force_fallback_adapter: false,
             }))
-            .ok_or(piet::Error::NotSupported)?;
-        info!("{:?}", adapter.get_info());
+            .unwrap();
 
-        let (device, queue) = futures::executor::block_on(
-            adapter.request_device(&wgpu::DeviceDescriptor::default(), None),
-        )
-        .map_err(|e| piet::Error::BackendError(Box::new(e)))?;
-
-        let format = surface
-            .get_supported_formats(&adapter)
-            .first()
-            .cloned()
-            .ok_or(piet::Error::MissingFeature("no supported texture format"))?;
-
-        let staging_belt = wgpu::util::StagingBelt::new(1024);
-
-        let msaa_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Multisampled frame descriptor"),
-            size: wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
+        let (device, queue) = futures::executor::block_on(adapter.request_device(
+            &wgpu::DeviceDescriptor {
+                features: wgpu::Features::empty(),
+                // WebGL doesn't support all of wgpu's features, so if
+                // we're building for the web we'll have to disable some.
+                limits: if cfg!(target_arch = "wasm32") {
+                    wgpu::Limits::downlevel_webgl2_defaults()
+                } else {
+                    wgpu::Limits::default()
+                },
+                label: None,
             },
-            mip_level_count: 1,
-            sample_count: 4,
-            dimension: wgpu::TextureDimension::D2,
-            format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-        });
-        let msaa = msaa_texture.create_view(&wgpu::TextureViewDescriptor::default());
+            None, // Trace path
+        ))
+        .unwrap();
 
-        let staging_belt = Rc::new(RefCell::new(staging_belt));
-        let encoder = Rc::new(RefCell::new(None));
-        let device = device;
-        let pipeline = pipeline::Pipeline::new(&device, format, Size::ZERO);
+        let surface_config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format: surface.get_supported_formats(&adapter)[0],
+            width: size.width as u32,
+            height: size.height as u32,
+            present_mode: wgpu::PresentMode::Fifo,
+            alpha_mode: surface.get_supported_alpha_modes(&adapter)[0],
+        };
 
         Ok(Self {
             instance,
+            surface,
+            adapter,
             device,
             queue,
-            surface,
-            size: Size::ZERO,
-            format,
-            staging_belt,
-            msaa,
-            pipeline,
-            svg_store: SvgStore::new(),
-            encoder,
+            surface_config,
+            size,
+            scale,
         })
     }
 
     pub fn set_size(&mut self, size: Size) {
         self.size = size;
-        let sc_desc = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format: self.format,
-            width: size.width as u32,
-            height: size.height as u32,
-            present_mode: wgpu::PresentMode::Fifo,
-            alpha_mode: wgpu::CompositeAlphaMode::PreMultiplied,
-        };
-        self.surface.configure(&self.device, &sc_desc);
-        let msaa_texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Multisampled frame descriptor"),
-            size: wgpu::Extent3d {
-                width: size.width as u32,
-                height: size.height as u32,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 4,
-            dimension: wgpu::TextureDimension::D2,
-            format: self.format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-        });
-        self.msaa = msaa_texture.create_view(&wgpu::TextureViewDescriptor::default());
-        self.pipeline.size = size;
+        self.surface_config.width = size.width as u32;
+        self.surface_config.height = size.height as u32;
+        self.surface.configure(&self.device, &self.surface_config);
     }
 
     pub fn set_scale(&mut self, scale: f64) {
-        self.pipeline.scale = scale;
+        self.scale = scale;
     }
 
     pub fn text(&self) -> WgpuText {
         todo!()
     }
+}
 
-    pub(crate) fn ensure_encoder(&mut self) {
-        let mut encoder = self.encoder.borrow_mut();
-        if encoder.is_none() {
-            *encoder = Some(
-                self.device
-                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                        label: Some("render"),
-                    }),
-            );
-        }
-    }
+#[derive(Clone)]
+pub enum WgpuBrush {
+    Solid(Color),
+    Gradient(FixedGradient),
+}
 
-    pub(crate) fn take_encoder(&mut self) -> wgpu::CommandEncoder {
-        self.encoder.take().unwrap()
+impl IntoBrush<PietWgpu> for WgpuBrush {
+    fn make_brush<'a>(
+        &'a self,
+        piet: &mut PietWgpu,
+        bbox: impl FnOnce() -> kurbo::Rect,
+    ) -> std::borrow::Cow<'a, <PietWgpu as RenderContext>::Brush> {
+        todo!()
     }
 }
 
-/// A struct provides a `RenderContext` and then can have its bitmap extracted.
-pub struct BitmapTarget<'a> {
-    phantom: PhantomData<&'a ()>,
+#[derive(Clone)]
+pub struct WgpuText;
+
+impl piet::Text for WgpuText {
+    type TextLayoutBuilder = WgpuTextLayoutBuilder;
+
+    type TextLayout = WgpuTextLayout;
+
+    fn font_family(&mut self, family_name: &str) -> Option<FontFamily> {
+        todo!()
+    }
+
+    fn load_font(&mut self, data: &[u8]) -> Result<FontFamily, Error> {
+        todo!()
+    }
+
+    fn new_text_layout(&mut self, text: impl TextStorage) -> Self::TextLayoutBuilder {
+        todo!()
+    }
+}
+
+pub struct WgpuTextLayoutBuilder;
+
+impl piet::TextLayoutBuilder for WgpuTextLayoutBuilder {
+    type Out = WgpuTextLayout;
+
+    fn max_width(self, width: f64) -> Self {
+        todo!()
+    }
+
+    fn alignment(self, alignment: TextAlignment) -> Self {
+        todo!()
+    }
+
+    fn default_attribute(self, attribute: impl Into<TextAttribute>) -> Self {
+        todo!()
+    }
+
+    fn range_attribute(
+        self,
+        range: impl std::ops::RangeBounds<usize>,
+        attribute: impl Into<TextAttribute>,
+    ) -> Self {
+        todo!()
+    }
+
+    fn build(self) -> Result<Self::Out, Error> {
+        todo!()
+    }
+}
+
+#[derive(Clone)]
+pub struct WgpuTextLayout;
+
+impl piet::TextLayout for WgpuTextLayout {
+    fn size(&self) -> Size {
+        todo!()
+    }
+
+    fn trailing_whitespace_width(&self) -> f64 {
+        todo!()
+    }
+
+    fn image_bounds(&self) -> kurbo::Rect {
+        todo!()
+    }
+
+    fn text(&self) -> &str {
+        todo!()
+    }
+
+    fn line_text(&self, line_number: usize) -> Option<&str> {
+        todo!()
+    }
+
+    fn line_metric(&self, line_number: usize) -> Option<LineMetric> {
+        todo!()
+    }
+
+    fn line_count(&self) -> usize {
+        todo!()
+    }
+
+    fn hit_test_point(&self, point: kurbo::Point) -> HitTestPoint {
+        todo!()
+    }
+
+    fn hit_test_text_position(&self, idx: usize) -> HitTestPosition {
+        todo!()
+    }
+}
+
+#[derive(Clone)]
+pub struct WgpuImage;
+
+impl piet::Image for WgpuImage {
+    fn size(&self) -> Size {
+        todo!()
+    }
+}
+
+impl piet::RenderContext for PietWgpu {
+    type Brush = WgpuBrush;
+
+    type Text = WgpuText;
+
+    type TextLayout = WgpuTextLayout;
+
+    type Image = WgpuImage;
+
+    fn status(&mut self) -> Result<(), Error> {
+        todo!()
+    }
+
+    fn solid_brush(&mut self, color: Color) -> Self::Brush {
+        WgpuBrush::Solid(color)
+    }
+
+    fn gradient(&mut self, gradient: impl Into<FixedGradient>) -> Result<Self::Brush, Error> {
+        Ok(WgpuBrush::Gradient(gradient.into()))
+    }
+
+    fn clear(&mut self, region: impl Into<Option<kurbo::Rect>>, color: Color) {
+        todo!()
+    }
+
+    fn stroke(&mut self, shape: impl kurbo::Shape, brush: &impl IntoBrush<Self>, width: f64) {
+        todo!()
+    }
+
+    fn stroke_styled(
+        &mut self,
+        shape: impl kurbo::Shape,
+        brush: &impl IntoBrush<Self>,
+        width: f64,
+        style: &StrokeStyle,
+    ) {
+        todo!()
+    }
+
+    fn fill(&mut self, shape: impl kurbo::Shape, brush: &impl IntoBrush<Self>) {
+        todo!()
+    }
+
+    fn fill_even_odd(&mut self, shape: impl kurbo::Shape, brush: &impl IntoBrush<Self>) {
+        todo!()
+    }
+
+    fn clip(&mut self, shape: impl kurbo::Shape) {
+        todo!()
+    }
+
+    fn text(&mut self) -> &mut Self::Text {
+        todo!()
+    }
+
+    fn draw_text(&mut self, layout: &Self::TextLayout, pos: impl Into<kurbo::Point>) {
+        todo!()
+    }
+
+    fn save(&mut self) -> Result<(), Error> {
+        todo!()
+    }
+
+    fn restore(&mut self) -> Result<(), Error> {
+        todo!()
+    }
+
+    fn finish(&mut self) -> Result<(), Error> {
+        todo!()
+    }
+
+    fn transform(&mut self, transform: kurbo::Affine) {
+        todo!()
+    }
+
+    fn make_image(
+        &mut self,
+        width: usize,
+        height: usize,
+        buf: &[u8],
+        format: ImageFormat,
+    ) -> Result<Self::Image, Error> {
+        todo!()
+    }
+
+    fn draw_image(
+        &mut self,
+        image: &Self::Image,
+        dst_rect: impl Into<kurbo::Rect>,
+        interp: InterpolationMode,
+    ) {
+        todo!()
+    }
+
+    fn draw_image_area(
+        &mut self,
+        image: &Self::Image,
+        src_rect: impl Into<kurbo::Rect>,
+        dst_rect: impl Into<kurbo::Rect>,
+        interp: InterpolationMode,
+    ) {
+        todo!()
+    }
+
+    fn capture_image_area(
+        &mut self,
+        src_rect: impl Into<kurbo::Rect>,
+    ) -> Result<Self::Image, Error> {
+        todo!()
+    }
+
+    fn blurred_rect(&mut self, rect: kurbo::Rect, blur_radius: f64, brush: &impl IntoBrush<Self>) {
+        todo!()
+    }
+
+    fn current_transform(&self) -> kurbo::Affine {
+        todo!()
+    }
 }
