@@ -1,4 +1,3 @@
-mod cache;
 mod context;
 mod font;
 mod layer;
@@ -7,22 +6,100 @@ mod svg;
 mod text;
 mod transformation;
 
+use std::collections::VecDeque;
+
 pub use piet::kurbo::*;
 pub use piet::*;
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 
 pub struct PietWgpu {
     pub renderer: WgpuRenderer,
+    pub cache: WgpuRenderPrimitives,
+    pub window: WgpuWindow,
 }
 
 impl PietWgpu {
     pub fn new<W: HasRawWindowHandle + HasRawDisplayHandle>(
         window: &W,
-        size: Size,
+        width: u32,
+        height: u32,
         scale: f64,
     ) -> Self {
-        let renderer = WgpuRenderer::new(window, size, scale).unwrap();
-        Self { renderer }
+        let renderer = WgpuRenderer::new(window, width, height, scale).unwrap();
+        let cache = WgpuRenderPrimitives::new();
+        let window = WgpuWindow::new(width, height, scale);
+
+        Self {
+            renderer,
+            cache,
+            window,
+        }
+    }
+
+    pub fn set_size(&mut self, width: u32, height: u32) {
+        self.window.width = width;
+        self.window.height = height;
+
+        self.renderer.surface_config.width = self.window.width;
+        self.renderer.surface_config.height = self.window.height;
+
+        self.renderer
+            .surface
+            .configure(&self.renderer.device, &self.renderer.surface_config);
+    }
+
+    pub fn set_scale(&mut self, scale: f64) {
+        self.window.scale = scale;
+    }
+}
+
+pub struct WgpuTransformer {
+    transformations: VecDeque<WgpuTransformation>,
+}
+
+impl WgpuTransformer {
+    fn new() -> Self {
+        Self {
+            transformations: VecDeque::new(),
+        }
+    }
+
+    fn transform<S: Shape>(&mut self, s: S) -> WgpuTransformation<S> {}
+}
+
+pub struct WgpuTransformation;
+
+pub struct WgpuWindow {
+    width: u32,
+    height: u32,
+    scale: f64,
+}
+
+impl WgpuWindow {
+    fn new(width: u32, height: u32, scale: f64) -> Self {
+        Self {
+            width,
+            height,
+            scale,
+        }
+    }
+}
+
+#[repr(C)]
+pub struct WgpuPrimitive {
+    transform: [[f64; 4]; 4],
+    color: [f64; 4],
+}
+
+pub struct WgpuRenderPrimitives {
+    primitives: Vec<WgpuPrimitive>,
+}
+
+impl WgpuRenderPrimitives {
+    fn new() -> Self {
+        Self {
+            primitives: Vec::new(),
+        }
     }
 }
 
@@ -33,15 +110,14 @@ pub struct WgpuRenderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     surface_config: wgpu::SurfaceConfiguration,
-    size: Size,
-    scale: f64,
 }
 static_assertions::assert_impl_all!(WgpuRenderer: Send, Sync);
 
 impl WgpuRenderer {
     fn new<W: HasRawWindowHandle + HasRawDisplayHandle>(
         window: &W,
-        size: Size,
+        width: u32,
+        height: u32,
         scale: f64,
     ) -> Result<Self, piet::Error> {
         let instance = wgpu::Instance::new(wgpu::Backends::all());
@@ -73,8 +149,8 @@ impl WgpuRenderer {
         let surface_config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface.get_supported_formats(&adapter)[0],
-            width: size.width as u32,
-            height: size.height as u32,
+            width,
+            height,
             present_mode: wgpu::PresentMode::Fifo,
             alpha_mode: surface.get_supported_alpha_modes(&adapter)[0],
         };
@@ -86,20 +162,7 @@ impl WgpuRenderer {
             device,
             queue,
             surface_config,
-            size,
-            scale,
         })
-    }
-
-    pub fn set_size(&mut self, size: Size) {
-        self.size = size;
-        self.surface_config.width = size.width as u32;
-        self.surface_config.height = size.height as u32;
-        self.surface.configure(&self.device, &self.surface_config);
-    }
-
-    pub fn set_scale(&mut self, scale: f64) {
-        self.scale = scale;
     }
 
     pub fn text(&self) -> WgpuText {
@@ -264,7 +327,10 @@ impl piet::RenderContext for PietWgpu {
     }
 
     fn fill(&mut self, shape: impl kurbo::Shape, brush: &impl IntoBrush<Self>) {
-        todo!()
+        self.cache.primitives.push(WgpuPrimitive {
+            transform: [],
+            color: (),
+        })
     }
 
     fn fill_even_odd(&mut self, shape: impl kurbo::Shape, brush: &impl IntoBrush<Self>) {

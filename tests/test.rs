@@ -24,14 +24,12 @@ fn render<FN: FnMut(&mut PietWgpu) + Sized + 'static>(mut fun: FN) {
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
-        piet_wgpu.renderer.set_size(Size::new(100.0, 100.0));
+        piet_wgpu.set_size(100, 100);
         match event {
             winit::event::Event::WindowEvent { window_id, event } if window_id == window.id() => {
                 match event {
                     winit::event::WindowEvent::Resized(new_size) => {
-                        piet_wgpu
-                            .renderer
-                            .set_size(Size::new(new_size.width.into(), new_size.height.into()));
+                        piet_wgpu.set_size(new_size.width, new_size.height);
                     }
                     _ => warn!("Unhandled window event: {event:?}"),
                 }
@@ -56,10 +54,8 @@ fn create_window() -> (Window, EventLoop<()>, PietWgpu) {
 
     let renderer = PietWgpu::new(
         &window,
-        Size::new(
-            window.inner_size().width.into(),
-            window.inner_size().height.into(),
-        ),
+        window.inner_size().width.into(),
+        window.inner_size().height.into(),
         window.scale_factor(),
     );
 
