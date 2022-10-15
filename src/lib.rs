@@ -6,16 +6,23 @@ mod svg;
 mod text;
 mod transformation;
 
-use std::collections::VecDeque;
+use std::{collections::VecDeque, rc::Rc};
 
+use lyon::{
+    geom::point,
+    lyon_tessellation::{
+        BuffersBuilder, FillOptions, FillTessellator, FillVertexConstructor, VertexBuffers,
+    },
+    path::Path,
+};
 pub use piet::kurbo::*;
 pub use piet::*;
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 
 pub struct PietWgpu {
     pub renderer: WgpuRenderer,
-    pub cache: WgpuRenderPrimitives,
     pub window: WgpuWindow,
+    pub transform: WgpuTransformation,
 }
 
 impl PietWgpu {
@@ -26,13 +33,13 @@ impl PietWgpu {
         scale: f64,
     ) -> Self {
         let renderer = WgpuRenderer::new(window, width, height, scale).unwrap();
-        let cache = WgpuRenderPrimitives::new();
         let window = WgpuWindow::new(width, height, scale);
+        let transform = WgpuTransformation::default();
 
         Self {
             renderer,
-            cache,
             window,
+            transform,
         }
     }
 
@@ -53,21 +60,10 @@ impl PietWgpu {
     }
 }
 
-pub struct WgpuTransformer {
-    transformations: VecDeque<WgpuTransformation>,
+#[derive(Default)]
+pub struct WgpuTransformation {
+    transforms: VecDeque<Affine>,
 }
-
-impl WgpuTransformer {
-    fn new() -> Self {
-        Self {
-            transformations: VecDeque::new(),
-        }
-    }
-
-    fn transform<S: Shape>(&mut self, s: S) -> WgpuTransformation<S> {}
-}
-
-pub struct WgpuTransformation;
 
 pub struct WgpuWindow {
     width: u32,
@@ -81,24 +77,6 @@ impl WgpuWindow {
             width,
             height,
             scale,
-        }
-    }
-}
-
-#[repr(C)]
-pub struct WgpuPrimitive {
-    transform: [[f64; 4]; 4],
-    color: [f64; 4],
-}
-
-pub struct WgpuRenderPrimitives {
-    primitives: Vec<WgpuPrimitive>,
-}
-
-impl WgpuRenderPrimitives {
-    fn new() -> Self {
-        Self {
-            primitives: Vec::new(),
         }
     }
 }
@@ -287,6 +265,26 @@ impl piet::Image for WgpuImage {
     }
 }
 
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct GpuVertex {
+    position: [f32; 2],
+    normal: [f32; 2],
+    prim_id: u32,
+}
+
+pub struct WithId(pub u32);
+
+impl FillVertexConstructor<GpuVertex> for WithId {
+    fn new_vertex(&mut self, vertex: lyon::tessellation::FillVertex) -> GpuVertex {
+        GpuVertex {
+            position: vertex.position().to_array(),
+            normal: [0.0, 0.0],
+            prim_id: self.0,
+        }
+    }
+}
+
 impl piet::RenderContext for PietWgpu {
     type Brush = WgpuBrush;
 
@@ -327,10 +325,32 @@ impl piet::RenderContext for PietWgpu {
     }
 
     fn fill(&mut self, shape: impl kurbo::Shape, brush: &impl IntoBrush<Self>) {
-        self.cache.primitives.push(WgpuPrimitive {
-            transform: [],
-            color: (),
-        })
+        if let Some(rect) = shape.as_rect() {
+            let mut fill_tess = FillTessellator::new();
+
+            let mut builder = Path::builder();
+
+            builder.begin(point(rect.x0 as f32, rect.y0 as f32));
+            builder.begin(point(rect.x0 as f32, rect.y1 as f32));
+            builder.begin(point(rect.x1 as f32, rect.y1 as f32));
+            builder.begin(point(rect.x1 as f32, rect.y0 as f32));
+
+            builder.close();
+
+            let path = builder.build();
+
+            let mut geometry: VertexBuffers<GpuVertex, u16> = VertexBuffers::new();
+            let fill_prim_id = 1;
+
+            fill_tess
+                .tessellate(
+                    &path,
+                    &FillOptions::tolerance(0.02)
+                        .with_fill_rule(lyon::tessellation::FillRule::NonZero),
+                    &mut BuffersBuilder::new(&mut geometry, WithId(fill_prim_id as u32)),
+                )
+                .unwrap();
+        }
     }
 
     fn fill_even_odd(&mut self, shape: impl kurbo::Shape, brush: &impl IntoBrush<Self>) {
