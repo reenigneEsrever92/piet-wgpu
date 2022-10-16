@@ -1,12 +1,7 @@
-mod context;
-mod font;
-mod layer;
-mod pipeline;
-mod svg;
+mod renderer;
 mod text;
-mod transformation;
 
-use std::{collections::VecDeque, rc::Rc};
+use std::collections::VecDeque;
 
 use lyon::{
     geom::point,
@@ -18,11 +13,12 @@ use lyon::{
 pub use piet::kurbo::*;
 pub use piet::*;
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
+use renderer::WgpuRenderer;
+use text::{WgpuText, WgpuTextLayout};
 
 pub struct PietWgpu {
     pub renderer: WgpuRenderer,
     pub window: WgpuWindow,
-    pub transform: WgpuTransformation,
 }
 
 impl PietWgpu {
@@ -34,35 +30,20 @@ impl PietWgpu {
     ) -> Self {
         let renderer = WgpuRenderer::new(window, width, height, scale).unwrap();
         let window = WgpuWindow::new(width, height, scale);
-        let transform = WgpuTransformation::default();
 
-        Self {
-            renderer,
-            window,
-            transform,
-        }
+        Self { renderer, window }
     }
 
     pub fn set_size(&mut self, width: u32, height: u32) {
         self.window.width = width;
         self.window.height = height;
 
-        self.renderer.surface_config.width = self.window.width;
-        self.renderer.surface_config.height = self.window.height;
-
-        self.renderer
-            .surface
-            .configure(&self.renderer.device, &self.renderer.surface_config);
+        self.renderer.set_size(width, height);
     }
 
     pub fn set_scale(&mut self, scale: f64) {
         self.window.scale = scale;
     }
-}
-
-#[derive(Default)]
-pub struct WgpuTransformation {
-    transforms: VecDeque<Affine>,
 }
 
 pub struct WgpuWindow {
@@ -78,73 +59,6 @@ impl WgpuWindow {
             height,
             scale,
         }
-    }
-}
-
-pub struct WgpuRenderer {
-    instance: wgpu::Instance,
-    surface: wgpu::Surface,
-    adapter: wgpu::Adapter,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    surface_config: wgpu::SurfaceConfiguration,
-}
-static_assertions::assert_impl_all!(WgpuRenderer: Send, Sync);
-
-impl WgpuRenderer {
-    fn new<W: HasRawWindowHandle + HasRawDisplayHandle>(
-        window: &W,
-        width: u32,
-        height: u32,
-        scale: f64,
-    ) -> Result<Self, piet::Error> {
-        let instance = wgpu::Instance::new(wgpu::Backends::all());
-        let surface = unsafe { instance.create_surface(window) };
-        let adapter =
-            futures::executor::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::default(),
-                compatible_surface: Some(&surface),
-                force_fallback_adapter: false,
-            }))
-            .unwrap();
-
-        let (device, queue) = futures::executor::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                features: wgpu::Features::empty(),
-                // WebGL doesn't support all of wgpu's features, so if
-                // we're building for the web we'll have to disable some.
-                limits: if cfg!(target_arch = "wasm32") {
-                    wgpu::Limits::downlevel_webgl2_defaults()
-                } else {
-                    wgpu::Limits::default()
-                },
-                label: None,
-            },
-            None, // Trace path
-        ))
-        .unwrap();
-
-        let surface_config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format: surface.get_supported_formats(&adapter)[0],
-            width,
-            height,
-            present_mode: wgpu::PresentMode::Fifo,
-            alpha_mode: surface.get_supported_alpha_modes(&adapter)[0],
-        };
-
-        Ok(Self {
-            instance,
-            surface,
-            adapter,
-            device,
-            queue,
-            surface_config,
-        })
-    }
-
-    pub fn text(&self) -> WgpuText {
-        todo!()
     }
 }
 
@@ -165,123 +79,11 @@ impl IntoBrush<PietWgpu> for WgpuBrush {
 }
 
 #[derive(Clone)]
-pub struct WgpuText;
-
-impl piet::Text for WgpuText {
-    type TextLayoutBuilder = WgpuTextLayoutBuilder;
-
-    type TextLayout = WgpuTextLayout;
-
-    fn font_family(&mut self, family_name: &str) -> Option<FontFamily> {
-        todo!()
-    }
-
-    fn load_font(&mut self, data: &[u8]) -> Result<FontFamily, Error> {
-        todo!()
-    }
-
-    fn new_text_layout(&mut self, text: impl TextStorage) -> Self::TextLayoutBuilder {
-        todo!()
-    }
-}
-
-pub struct WgpuTextLayoutBuilder;
-
-impl piet::TextLayoutBuilder for WgpuTextLayoutBuilder {
-    type Out = WgpuTextLayout;
-
-    fn max_width(self, width: f64) -> Self {
-        todo!()
-    }
-
-    fn alignment(self, alignment: TextAlignment) -> Self {
-        todo!()
-    }
-
-    fn default_attribute(self, attribute: impl Into<TextAttribute>) -> Self {
-        todo!()
-    }
-
-    fn range_attribute(
-        self,
-        range: impl std::ops::RangeBounds<usize>,
-        attribute: impl Into<TextAttribute>,
-    ) -> Self {
-        todo!()
-    }
-
-    fn build(self) -> Result<Self::Out, Error> {
-        todo!()
-    }
-}
-
-#[derive(Clone)]
-pub struct WgpuTextLayout;
-
-impl piet::TextLayout for WgpuTextLayout {
-    fn size(&self) -> Size {
-        todo!()
-    }
-
-    fn trailing_whitespace_width(&self) -> f64 {
-        todo!()
-    }
-
-    fn image_bounds(&self) -> kurbo::Rect {
-        todo!()
-    }
-
-    fn text(&self) -> &str {
-        todo!()
-    }
-
-    fn line_text(&self, line_number: usize) -> Option<&str> {
-        todo!()
-    }
-
-    fn line_metric(&self, line_number: usize) -> Option<LineMetric> {
-        todo!()
-    }
-
-    fn line_count(&self) -> usize {
-        todo!()
-    }
-
-    fn hit_test_point(&self, point: kurbo::Point) -> HitTestPoint {
-        todo!()
-    }
-
-    fn hit_test_text_position(&self, idx: usize) -> HitTestPosition {
-        todo!()
-    }
-}
-
-#[derive(Clone)]
 pub struct WgpuImage;
 
 impl piet::Image for WgpuImage {
     fn size(&self) -> Size {
         todo!()
-    }
-}
-
-#[repr(C)]
-#[derive(Copy, Clone)]
-struct GpuVertex {
-    position: [f32; 2],
-    normal: [f32; 2],
-    prim_id: u32,
-}
-
-pub struct WithId(pub u32);
-
-impl FillVertexConstructor<GpuVertex> for WithId {
-    fn new_vertex(&mut self, vertex: lyon::tessellation::FillVertex) -> GpuVertex {
-        GpuVertex {
-            position: vertex.position().to_array(),
-            normal: [0.0, 0.0],
-            prim_id: self.0,
-        }
     }
 }
 
@@ -324,32 +126,9 @@ impl piet::RenderContext for PietWgpu {
         todo!()
     }
 
-    fn fill(&mut self, shape: impl kurbo::Shape, brush: &impl IntoBrush<Self>) {
+    fn fill(&mut self, shape: impl Shape, brush: &impl IntoBrush<Self>) {
         if let Some(rect) = shape.as_rect() {
-            let mut fill_tess = FillTessellator::new();
-
-            let mut builder = Path::builder();
-
-            builder.begin(point(rect.x0 as f32, rect.y0 as f32));
-            builder.begin(point(rect.x0 as f32, rect.y1 as f32));
-            builder.begin(point(rect.x1 as f32, rect.y1 as f32));
-            builder.begin(point(rect.x1 as f32, rect.y0 as f32));
-
-            builder.close();
-
-            let path = builder.build();
-
-            let mut geometry: VertexBuffers<GpuVertex, u16> = VertexBuffers::new();
-            let fill_prim_id = 1;
-
-            fill_tess
-                .tessellate(
-                    &path,
-                    &FillOptions::tolerance(0.02)
-                        .with_fill_rule(lyon::tessellation::FillRule::NonZero),
-                    &mut BuffersBuilder::new(&mut geometry, WithId(fill_prim_id as u32)),
-                )
-                .unwrap();
+            self.renderer.fill_rect(rect, brush);
         }
     }
 
