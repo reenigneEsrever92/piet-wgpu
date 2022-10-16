@@ -1,8 +1,5 @@
 use log::warn;
-use piet_wgpu::{
-    kurbo::{Rect, Size},
-    Color, PietWgpu, RenderContext, WgpuRenderer,
-};
+use piet_wgpu::{kurbo::Rect, Color, PietWgpu, RenderContext};
 use winit::{
     dpi::LogicalSize,
     event_loop::{ControlFlow, EventLoop, EventLoopBuilder},
