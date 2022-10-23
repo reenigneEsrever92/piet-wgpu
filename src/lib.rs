@@ -1,3 +1,4 @@
+mod data;
 mod renderer;
 mod text;
 
@@ -13,11 +14,11 @@ use lyon::{
 pub use piet::kurbo::*;
 pub use piet::*;
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
-use renderer::WgpuRenderer;
+use renderer::WgpuImmediateTesselationRenderer;
 use text::{WgpuText, WgpuTextLayout};
 
 pub struct PietWgpu {
-    pub renderer: WgpuRenderer,
+    pub renderer: WgpuImmediateTesselationRenderer,
     pub window: WgpuWindow,
 }
 
@@ -28,7 +29,7 @@ impl PietWgpu {
         height: u32,
         scale: f64,
     ) -> Self {
-        let renderer = WgpuRenderer::new(window, width, height, scale).unwrap();
+        let renderer = WgpuImmediateTesselationRenderer::new(window, width, height, scale).unwrap();
         let window = WgpuWindow::new(width, height, scale);
 
         Self { renderer, window }
@@ -157,7 +158,7 @@ impl piet::RenderContext for PietWgpu {
     }
 
     fn finish(&mut self) -> Result<(), Error> {
-        todo!()
+        self.renderer.finish()
     }
 
     fn transform(&mut self, transform: kurbo::Affine) {

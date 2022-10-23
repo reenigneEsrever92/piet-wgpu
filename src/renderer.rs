@@ -9,19 +9,24 @@ use piet::{kurbo::Rect, IntoBrush};
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use wgpu::util::DeviceExt;
 
-use crate::PietWgpu;
+use crate::{
+    data::{Globals, GpuVertex, Primitive, WithId},
+    PietWgpu,
+};
 
-pub struct WgpuRenderer {
+pub struct WgpuImmediateTesselationRenderer {
     instance: wgpu::Instance,
     surface: wgpu::Surface,
     adapter: wgpu::Adapter,
     device: wgpu::Device,
     queue: wgpu::Queue,
     surface_config: wgpu::SurfaceConfiguration,
+    geometry_buffer: VertexBuffers<GpuVertex, u16>,
+    primitive_buffer: Vec<Primitive>,
 }
-static_assertions::assert_impl_all!(WgpuRenderer: Send, Sync);
+static_assertions::assert_impl_all!(WgpuImmediateTesselationRenderer: Send, Sync);
 
-impl WgpuRenderer {
+impl WgpuImmediateTesselationRenderer {
     pub fn new<W: HasRawWindowHandle + HasRawDisplayHandle>(
         window: &W,
         width: u32,
@@ -63,6 +68,10 @@ impl WgpuRenderer {
             alpha_mode: surface.get_supported_alpha_modes(&adapter)[0],
         };
 
+        let geometry_buffer = VertexBuffers::new();
+
+        let primitive_buffer = Vec::with_capacity(256); // 256 primitives tops for now
+
         Ok(Self {
             instance,
             surface,
@@ -70,6 +79,8 @@ impl WgpuRenderer {
             device,
             queue,
             surface_config,
+            geometry_buffer,
+            primitive_buffer,
         })
     }
 
@@ -94,31 +105,31 @@ impl WgpuRenderer {
 
         let path = builder.build();
 
-        let mut geometry: VertexBuffers<GpuVertex, u16> = VertexBuffers::new();
         let fill_prim_id = 1;
 
         fill_tess
             .tessellate(
                 &path,
                 &FillOptions::tolerance(0.02).with_fill_rule(lyon::tessellation::FillRule::NonZero),
-                &mut BuffersBuilder::new(&mut geometry, WithId(fill_prim_id as u32)),
+                &mut BuffersBuilder::new(&mut self.geometry_buffer, WithId(fill_prim_id as u32)),
             )
             .unwrap();
 
-        let mut cpu_primitives = Vec::with_capacity(256);
-        let prim_buffer_byte_size = (256 * std::mem::size_of::<Primitive>()) as u64;
-        let globals_buffer_byte_size = std::mem::size_of::<Globals>() as u64;
-
         for _ in 0..256 {
-            cpu_primitives.push(Primitive {
+            self.primitive_buffer.push(Primitive {
                 color: [1.0, 0.0, 0.0, 1.0],
                 z_index: 0,
                 width: 0.0,
                 translate: [0.0, 0.0],
                 angle: 0.0,
-                ..Primitive::DEFAULT
+                ..Primitive::default()
             });
         }
+    }
+
+    pub fn finish(&self) -> Result<(), piet::Error> {
+        let globals_buffer_byte_size = std::mem::size_of::<Globals>() as u64;
+        let prim_buffer_byte_size = (256 * std::mem::size_of::<Primitive>()) as u64;
 
         let prims_ubo = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Prims ubo"),
@@ -131,7 +142,7 @@ impl WgpuRenderer {
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: None,
-                contents: bytemuck::cast_slice(&geometry.vertices),
+                contents: bytemuck::cast_slice(&self.geometry_buffer.vertices),
                 usage: wgpu::BufferUsages::VERTEX,
             });
 
@@ -139,7 +150,7 @@ impl WgpuRenderer {
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: None,
-                contents: bytemuck::cast_slice(&geometry.indices),
+                contents: bytemuck::cast_slice(&self.geometry_buffer.indices),
                 usage: wgpu::BufferUsages::INDEX,
             });
 
@@ -243,7 +254,7 @@ impl WgpuRenderer {
             label: None,
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
-                module: &vs_module,
+                module: vs_module,
                 entry_point: "main",
                 buffers: &[wgpu::VertexBufferLayout {
                     array_stride: std::mem::size_of::<GpuVertex>() as u64,
@@ -268,10 +279,10 @@ impl WgpuRenderer {
                 }],
             },
             fragment: Some(wgpu::FragmentState {
-                module: &fs_module,
+                module: fs_module,
                 entry_point: "main",
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::Bgra8Unorm,
+                    format: wgpu::TextureFormat::Bgra8UnormSrgb,
                     blend: None,
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -285,9 +296,9 @@ impl WgpuRenderer {
                 conservative: false,
                 unclipped_depth: false,
             },
-            depth_stencil: depth_stencil_state.clone(),
+            depth_stencil: depth_stencil_state,
             multisample: wgpu::MultisampleState {
-                count: 2,
+                count: 1,
                 mask: !0,
                 alpha_to_coverage_enabled: false,
             },
@@ -299,69 +310,70 @@ impl WgpuRenderer {
             .create_render_pipeline(&render_pipeline_descriptor);
 
         render_pipeline_descriptor.primitive.topology = wgpu::PrimitiveTopology::LineList;
-    }
-}
 
-#[repr(C)]
-#[derive(Copy, Clone)]
-struct Globals {
-    resolution: [f32; 2],
-    scroll_offset: [f32; 2],
-    zoom: f32,
-    _pad: f32,
-}
+        let output = self.surface.get_current_texture().unwrap();
 
-unsafe impl bytemuck::Pod for Globals {}
-unsafe impl bytemuck::Zeroable for Globals {}
+        let depth_texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Depth texture"),
+            size: wgpu::Extent3d {
+                width: self.surface_config.width,
+                height: self.surface_config.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth32Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        });
 
-#[repr(C)]
-#[derive(Copy, Clone)]
-struct Primitive {
-    color: [f32; 4],
-    translate: [f32; 2],
-    z_index: i32,
-    width: f32,
-    angle: f32,
-    scale: f32,
-    _pad1: i32,
-    _pad2: i32,
-}
+        let depth_texture_view =
+            Some(depth_texture.create_view(&wgpu::TextureViewDescriptor::default()));
 
-impl Primitive {
-    const DEFAULT: Self = Primitive {
-        color: [0.0; 4],
-        translate: [0.0; 2],
-        z_index: 0,
-        width: 0.0,
-        angle: 0.0,
-        scale: 1.0,
-        _pad1: 0,
-        _pad2: 0,
-    };
-}
+        let frame_view = output
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
 
-unsafe impl bytemuck::Pod for Primitive {}
-unsafe impl bytemuck::Zeroable for Primitive {}
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Render Encoder"),
+            });
 
-#[repr(C)]
-#[derive(Copy, Clone)]
-struct GpuVertex {
-    position: [f32; 2],
-    normal: [f32; 2],
-    prim_id: u32,
-}
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Render Pass"),
+            color_attachments: &[
+                // This is what @location(0) in the fragment shader targets
+                Some(wgpu::RenderPassColorAttachment {
+                    view: &frame_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
+                        store: true,
+                    },
+                }),
+            ],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: depth_texture_view.as_ref().unwrap(),
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(0.0),
+                    store: true,
+                }),
+                stencil_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(0),
+                    store: true,
+                }),
+            }),
+        });
 
-unsafe impl bytemuck::Pod for GpuVertex {}
-unsafe impl bytemuck::Zeroable for GpuVertex {}
+        pass.set_pipeline(&render_pipeline);
+        pass.set_bind_group(0, &bind_group, &[]);
+        pass.set_index_buffer(ibo.slice(..), wgpu::IndexFormat::Uint16);
+        pass.set_vertex_buffer(0, vbo.slice(..));
 
-pub struct WithId(pub u32);
+        let fill_range = 0..(self.geometry_buffer.indices.len() as u32);
+        pass.draw_indexed(fill_range, 0, 0..32u32);
 
-impl FillVertexConstructor<GpuVertex> for WithId {
-    fn new_vertex(&mut self, vertex: lyon::tessellation::FillVertex) -> GpuVertex {
-        GpuVertex {
-            position: vertex.position().to_array(),
-            normal: [0.0, 0.0],
-            prim_id: self.0,
-        }
+        Ok(())
     }
 }

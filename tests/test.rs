@@ -34,8 +34,6 @@ fn render<FN: FnMut(&mut PietWgpu) + Sized + 'static>(mut fun: FN) {
             winit::event::Event::RedrawRequested(window_id) if window.id() == window_id => {
                 fun(&mut piet_wgpu);
             }
-            winit::event::Event::RedrawEventsCleared => todo!(),
-            winit::event::Event::LoopDestroyed => todo!(),
             _ => warn!("Unhandled event: {event:?}"),
         }
     });
