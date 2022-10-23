@@ -12,7 +12,8 @@ use winit::{
 fn test_init() {
     render(|renderer| {
         let brush = renderer.solid_brush(Color::rgb(1.0, 0.0, 0.0));
-        renderer.fill(Rect::new(10.0, 10.0, 30.0, 30.0), &brush);
+        renderer.fill(Rect::new(-0.5, -0.5, 0.5, 0.5), &brush);
+        renderer.fill(Rect::new(-1.0, -1.0, -0.5, -0.5), &brush);
     });
 }
 
@@ -60,7 +61,7 @@ fn create_window() -> (Window, EventLoop<()>, PietWgpu) {
     let event_loop = EventLoopBuilder::new().with_any_thread(true).build();
 
     let window = WindowBuilder::new()
-        .with_inner_size(LogicalSize::new(600, 400))
+        .with_inner_size(LogicalSize::new(600, 600))
         .build(&event_loop)
         .unwrap();
 

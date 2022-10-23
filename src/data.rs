@@ -1,6 +1,27 @@
 use lyon::lyon_tessellation::FillVertexConstructor;
 
 #[repr(C)]
+#[derive(Copy, Clone, Debug)]
+pub struct Vertex {
+    pub position: [f32; 3],
+    pub color: [f32; 4],
+}
+
+unsafe impl bytemuck::Pod for Vertex {}
+unsafe impl bytemuck::Zeroable for Vertex {}
+
+pub struct VertexBuilder;
+
+impl FillVertexConstructor<Vertex> for VertexBuilder {
+    fn new_vertex(&mut self, vertex: lyon::tessellation::FillVertex) -> Vertex {
+        Vertex {
+            position: [vertex.position().x, vertex.position().y, 1.0], // z is zero for now
+            color: [1.0, 0.0, 0.0, 1.0],                               // make it red
+        }
+    }
+}
+
+#[repr(C)]
 #[derive(Copy, Clone)]
 pub struct Globals {
     resolution: [f32; 2],
