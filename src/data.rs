@@ -27,7 +27,7 @@ pub struct Primitive {
 
 impl Primitive {
     const DEFAULT: Self = Primitive {
-        color: [0.0; 4],
+        color: [1.0, 0.0, 0.0, 1.0],
         translate: [0.0; 2],
         z_index: 0,
         width: 0.0,

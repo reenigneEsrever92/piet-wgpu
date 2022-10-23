@@ -20,6 +20,7 @@ pub struct WgpuImmediateTesselationRenderer {
     adapter: wgpu::Adapter,
     device: wgpu::Device,
     queue: wgpu::Queue,
+    pipeline: wgpu::RenderPipeline,
     surface_config: wgpu::SurfaceConfiguration,
     geometry_buffer: VertexBuffers<GpuVertex, u16>,
     primitive_buffer: Vec<Primitive>,
@@ -46,13 +47,7 @@ impl WgpuImmediateTesselationRenderer {
         let (device, queue) = futures::executor::block_on(adapter.request_device(
             &wgpu::DeviceDescriptor {
                 features: wgpu::Features::empty(),
-                // WebGL doesn't support all of wgpu's features, so if
-                // we're building for the web we'll have to disable some.
-                limits: if cfg!(target_arch = "wasm32") {
-                    wgpu::Limits::downlevel_webgl2_defaults()
-                } else {
-                    wgpu::Limits::default()
-                },
+                limits: wgpu::Limits::default(),
                 label: None,
             },
             None, // Trace path
@@ -65,12 +60,62 @@ impl WgpuImmediateTesselationRenderer {
             width,
             height,
             present_mode: wgpu::PresentMode::Fifo,
-            alpha_mode: surface.get_supported_alpha_modes(&adapter)[0],
+            alpha_mode: wgpu::CompositeAlphaMode::Auto,
         };
 
         let geometry_buffer = VertexBuffers::new();
 
         let primitive_buffer = Vec::with_capacity(256); // 256 primitives tops for now
+
+        let simple_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Simple vs"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("./../shaders/simple.wgsl").into()),
+        });
+
+        let render_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Render Pipeline Layout"),
+                bind_group_layouts: &[],
+                push_constant_ranges: &[],
+            });
+
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Render Pipeline"),
+            layout: Some(&render_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &simple_shader,
+                entry_point: "vs_main",
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &simple_shader,
+                entry_point: "fs_main",
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: surface_config.format,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList, // 1.
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw, // 2.
+                cull_mode: Some(wgpu::Face::Back),
+                // Setting this to anything other than Fill requires Features::NON_FILL_POLYGON_MODE
+                polygon_mode: wgpu::PolygonMode::Fill,
+                // Requires Features::DEPTH_CLIP_CONTROL
+                unclipped_depth: false,
+                // Requires Features::CONSERVATIVE_RASTERIZATION
+                conservative: false,
+            },
+            depth_stencil: None, // 1.
+            multisample: wgpu::MultisampleState {
+                count: 1,                         // 2.
+                mask: !0,                         // 3.
+                alpha_to_coverage_enabled: false, // 4.
+            },
+            multiview: None, // 5.
+        });
 
         Ok(Self {
             instance,
@@ -78,6 +123,7 @@ impl WgpuImmediateTesselationRenderer {
             adapter,
             device,
             queue,
+            pipeline,
             surface_config,
             geometry_buffer,
             primitive_buffer,
@@ -107,6 +153,7 @@ impl WgpuImmediateTesselationRenderer {
 
         let fill_prim_id = 1;
 
+        // tesselates geometries
         fill_tess
             .tessellate(
                 &path,
@@ -128,188 +175,179 @@ impl WgpuImmediateTesselationRenderer {
     }
 
     pub fn finish(&self) -> Result<(), piet::Error> {
-        let globals_buffer_byte_size = std::mem::size_of::<Globals>() as u64;
-        let prim_buffer_byte_size = (256 * std::mem::size_of::<Primitive>()) as u64;
+        // let globals_buffer_byte_size = std::mem::size_of::<Globals>() as u64;
+        // let prim_buffer_byte_size = (256 * std::mem::size_of::<Primitive>()) as u64;
 
-        let prims_ubo = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Prims ubo"),
-            size: prim_buffer_byte_size,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        // let vbo = self
+        //     .device
+        //     .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        //         label: None,
+        //         contents: bytemuck::cast_slice(&self.geometry_buffer.vertices),
+        //         usage: wgpu::BufferUsages::VERTEX,
+        //     });
 
-        let vbo = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: None,
-                contents: bytemuck::cast_slice(&self.geometry_buffer.vertices),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
+        // let ibo = self
+        //     .device
+        //     .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        //         label: None,
+        //         contents: bytemuck::cast_slice(&self.geometry_buffer.indices),
+        //         usage: wgpu::BufferUsages::INDEX,
+        //     });
 
-        let ibo = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: None,
-                contents: bytemuck::cast_slice(&self.geometry_buffer.indices),
-                usage: wgpu::BufferUsages::INDEX,
-            });
+        // let prims_ubo = self.device.create_buffer(&wgpu::BufferDescriptor {
+        //     label: Some("Prims ubo"),
+        //     size: prim_buffer_byte_size,
+        //     usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        //     mapped_at_creation: false,
+        // });
 
-        let prims_ubo = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Prims ubo"),
-            size: prim_buffer_byte_size,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        // let globals_ubo = self.device.create_buffer(&wgpu::BufferDescriptor {
+        //     label: Some("Globals ubo"),
+        //     size: globals_buffer_byte_size,
+        //     usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        //     mapped_at_creation: false,
+        // });
 
-        let globals_ubo = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Globals ubo"),
-            size: globals_buffer_byte_size,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        // let vs_module = &self
+        //     .device
+        //     .create_shader_module(wgpu::ShaderModuleDescriptor {
+        //         label: Some("Geometry vs"),
+        //         source: wgpu::ShaderSource::Wgsl(
+        //             include_str!("./../shaders/geometry.vs.wgsl").into(),
+        //         ),
+        //     });
 
-        let vs_module = &self
-            .device
-            .create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("Geometry vs"),
-                source: wgpu::ShaderSource::Wgsl(
-                    include_str!("./../shaders/geometry.vs.wgsl").into(),
-                ),
-            });
+        // let fs_module = &self
+        //     .device
+        //     .create_shader_module(wgpu::ShaderModuleDescriptor {
+        //         label: Some("Geometry fs"),
+        //         source: wgpu::ShaderSource::Wgsl(
+        //             include_str!("./../shaders/geometry.fs.wgsl").into(),
+        //         ),
+        //     });
 
-        let fs_module = &self
-            .device
-            .create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("Geometry fs"),
-                source: wgpu::ShaderSource::Wgsl(
-                    include_str!("./../shaders/geometry.fs.wgsl").into(),
-                ),
-            });
+        // let bind_group_layout =
+        //     self.device
+        //         .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        //             label: Some("Bind group layout"),
+        //             entries: &[
+        //                 wgpu::BindGroupLayoutEntry {
+        //                     binding: 0,
+        //                     visibility: wgpu::ShaderStages::VERTEX,
+        //                     ty: wgpu::BindingType::Buffer {
+        //                         ty: wgpu::BufferBindingType::Uniform,
+        //                         has_dynamic_offset: false,
+        //                         min_binding_size: wgpu::BufferSize::new(globals_buffer_byte_size),
+        //                     },
+        //                     count: None,
+        //                 },
+        //                 wgpu::BindGroupLayoutEntry {
+        //                     binding: 1,
+        //                     visibility: wgpu::ShaderStages::VERTEX,
+        //                     ty: wgpu::BindingType::Buffer {
+        //                         ty: wgpu::BufferBindingType::Uniform,
+        //                         has_dynamic_offset: false,
+        //                         min_binding_size: wgpu::BufferSize::new(prim_buffer_byte_size),
+        //                     },
+        //                     count: None,
+        //                 },
+        //             ],
+        //         });
 
-        let bind_group_layout =
-            self.device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: Some("Bind group layout"),
-                    entries: &[
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 0,
-                            visibility: wgpu::ShaderStages::VERTEX,
-                            ty: wgpu::BindingType::Buffer {
-                                ty: wgpu::BufferBindingType::Uniform,
-                                has_dynamic_offset: false,
-                                min_binding_size: wgpu::BufferSize::new(globals_buffer_byte_size),
-                            },
-                            count: None,
-                        },
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 1,
-                            visibility: wgpu::ShaderStages::VERTEX,
-                            ty: wgpu::BindingType::Buffer {
-                                ty: wgpu::BufferBindingType::Uniform,
-                                has_dynamic_offset: false,
-                                min_binding_size: wgpu::BufferSize::new(prim_buffer_byte_size),
-                            },
-                            count: None,
-                        },
-                    ],
-                });
+        // let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        //     label: Some("Bind group"),
+        //     layout: &bind_group_layout,
+        //     entries: &[
+        //         wgpu::BindGroupEntry {
+        //             binding: 0,
+        //             resource: wgpu::BindingResource::Buffer(globals_ubo.as_entire_buffer_binding()),
+        //         },
+        //         wgpu::BindGroupEntry {
+        //             binding: 1,
+        //             resource: wgpu::BindingResource::Buffer(prims_ubo.as_entire_buffer_binding()),
+        //         },
+        //     ],
+        // });
 
-        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Bind group"),
-            layout: &bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer(globals_ubo.as_entire_buffer_binding()),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Buffer(prims_ubo.as_entire_buffer_binding()),
-                },
-            ],
-        });
+        // let pipeline_layout = self
+        //     .device
+        //     .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        //         bind_group_layouts: &[&bind_group_layout],
+        //         push_constant_ranges: &[],
+        //         label: None,
+        //     });
 
-        let pipeline_layout = self
-            .device
-            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                bind_group_layouts: &[&bind_group_layout],
-                push_constant_ranges: &[],
-                label: None,
-            });
+        // let depth_stencil_state = Some(wgpu::DepthStencilState {
+        //     format: wgpu::TextureFormat::Depth32Float,
+        //     depth_write_enabled: true,
+        //     depth_compare: wgpu::CompareFunction::Greater,
+        //     stencil: wgpu::StencilState {
+        //         front: wgpu::StencilFaceState::IGNORE,
+        //         back: wgpu::StencilFaceState::IGNORE,
+        //         read_mask: 0,
+        //         write_mask: 0,
+        //     },
+        //     bias: wgpu::DepthBiasState::default(),
+        // });
 
-        let depth_stencil_state = Some(wgpu::DepthStencilState {
-            format: wgpu::TextureFormat::Depth32Float,
-            depth_write_enabled: true,
-            depth_compare: wgpu::CompareFunction::Greater,
-            stencil: wgpu::StencilState {
-                front: wgpu::StencilFaceState::IGNORE,
-                back: wgpu::StencilFaceState::IGNORE,
-                read_mask: 0,
-                write_mask: 0,
-            },
-            bias: wgpu::DepthBiasState::default(),
-        });
+        // let mut render_pipeline_descriptor = wgpu::RenderPipelineDescriptor {
+        //     label: None,
+        //     layout: Some(&pipeline_layout),
+        //     vertex: wgpu::VertexState {
+        //         module: vs_module,
+        //         entry_point: "main",
+        //         buffers: &[wgpu::VertexBufferLayout {
+        //             array_stride: std::mem::size_of::<GpuVertex>() as u64,
+        //             step_mode: wgpu::VertexStepMode::Vertex,
+        //             attributes: &[
+        //                 wgpu::VertexAttribute {
+        //                     offset: 0,
+        //                     format: wgpu::VertexFormat::Float32x2,
+        //                     shader_location: 0,
+        //                 },
+        //                 wgpu::VertexAttribute {
+        //                     offset: 8,
+        //                     format: wgpu::VertexFormat::Float32x2,
+        //                     shader_location: 1,
+        //                 },
+        //                 wgpu::VertexAttribute {
+        //                     offset: 16,
+        //                     format: wgpu::VertexFormat::Uint32,
+        //                     shader_location: 2,
+        //                 },
+        //             ],
+        //         }],
+        //     },
+        //     fragment: Some(wgpu::FragmentState {
+        //         module: fs_module,
+        //         entry_point: "main",
+        //         targets: &[Some(wgpu::ColorTargetState {
+        //             format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        //             blend: None,
+        //             write_mask: wgpu::ColorWrites::ALL,
+        //         })],
+        //     }),
+        //     primitive: wgpu::PrimitiveState {
+        //         topology: wgpu::PrimitiveTopology::TriangleList,
+        //         polygon_mode: wgpu::PolygonMode::Fill,
+        //         front_face: wgpu::FrontFace::Ccw,
+        //         strip_index_format: None,
+        //         cull_mode: Some(wgpu::Face::Back),
+        //         conservative: false,
+        //         unclipped_depth: false,
+        //     },
+        //     depth_stencil: depth_stencil_state,
+        //     multisample: wgpu::MultisampleState {
+        //         count: 1,
+        //         mask: !0,
+        //         alpha_to_coverage_enabled: false,
+        //     },
+        //     multiview: None,
+        // };
 
-        let mut render_pipeline_descriptor = wgpu::RenderPipelineDescriptor {
-            label: None,
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: vs_module,
-                entry_point: "main",
-                buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<GpuVertex>() as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &[
-                        wgpu::VertexAttribute {
-                            offset: 0,
-                            format: wgpu::VertexFormat::Float32x2,
-                            shader_location: 0,
-                        },
-                        wgpu::VertexAttribute {
-                            offset: 8,
-                            format: wgpu::VertexFormat::Float32x2,
-                            shader_location: 1,
-                        },
-                        wgpu::VertexAttribute {
-                            offset: 16,
-                            format: wgpu::VertexFormat::Uint32,
-                            shader_location: 2,
-                        },
-                    ],
-                }],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: fs_module,
-                entry_point: "main",
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::Bgra8UnormSrgb,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                polygon_mode: wgpu::PolygonMode::Fill,
-                front_face: wgpu::FrontFace::Ccw,
-                strip_index_format: None,
-                cull_mode: Some(wgpu::Face::Back),
-                conservative: false,
-                unclipped_depth: false,
-            },
-            depth_stencil: depth_stencil_state,
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            multiview: None,
-        };
-
-        let render_pipeline = self
-            .device
-            .create_render_pipeline(&render_pipeline_descriptor);
-
-        render_pipeline_descriptor.primitive.topology = wgpu::PrimitiveTopology::LineList;
+        // let render_pipeline = self
+        //     .device
+        //     .create_render_pipeline(&render_pipeline_descriptor);
 
         let output = self.surface.get_current_texture().unwrap();
 
@@ -353,26 +391,36 @@ impl WgpuImmediateTesselationRenderer {
                     },
                 }),
             ],
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: depth_texture_view.as_ref().unwrap(),
-                depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(0.0),
-                    store: true,
-                }),
-                stencil_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(0),
-                    store: true,
-                }),
-            }),
+            depth_stencil_attachment: None,
+            // depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+            //     view: depth_texture_view.as_ref().unwrap(),
+            //     depth_ops: Some(wgpu::Operations {
+            //         load: wgpu::LoadOp::Clear(0.0),
+            //         store: true,
+            //     }),
+            //     stencil_ops: Some(wgpu::Operations {
+            //         load: wgpu::LoadOp::Clear(0),
+            //         store: true,
+            //     }),
+            // }),
         });
 
-        pass.set_pipeline(&render_pipeline);
-        pass.set_bind_group(0, &bind_group, &[]);
-        pass.set_index_buffer(ibo.slice(..), wgpu::IndexFormat::Uint16);
-        pass.set_vertex_buffer(0, vbo.slice(..));
+        // pass.set_pipeline(&render_pipeline);
+        // pass.set_bind_group(0, &bind_group, &[]);
+        // pass.set_index_buffer(ibo.slice(..), wgpu::IndexFormat::Uint16);
+        // pass.set_vertex_buffer(0, vbo.slice(..));
 
-        let fill_range = 0..(self.geometry_buffer.indices.len() as u32);
-        pass.draw_indexed(fill_range, 0, 0..32u32);
+        // let fill_range = 0..(self.geometry_buffer.indices.len() as u32);
+        // pass.draw_indexed(fill_range, 0, 0..32u32);
+
+        pass.set_pipeline(&self.pipeline);
+        pass.draw(0..3, 0..1);
+
+        // pass borrows encoder
+        drop(pass);
+
+        self.queue.submit(std::iter::once(encoder.finish()));
+        output.present();
 
         Ok(())
     }

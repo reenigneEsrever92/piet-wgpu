@@ -32,7 +32,9 @@ impl PietWgpu {
         let renderer = WgpuImmediateTesselationRenderer::new(window, width, height, scale).unwrap();
         let window = WgpuWindow::new(width, height, scale);
 
-        Self { renderer, window }
+        let mut piet_wgpu = Self { renderer, window };
+        piet_wgpu.set_size(width, height);
+        piet_wgpu
     }
 
     pub fn set_size(&mut self, width: u32, height: u32) {
