@@ -1,5 +1,9 @@
 use log::warn;
-use piet_wgpu::{kurbo::Rect, Color, PietWgpu, RenderContext};
+use piet_wgpu::{
+    immediate::{ImmediateRenderer, WgpuImmediateTesselationRenderer},
+    kurbo::Rect,
+    Color, PietWgpu, RenderContext,
+};
 use winit::{
     dpi::LogicalSize,
     event::{ElementState, KeyboardInput, VirtualKeyCode, WindowEvent},
@@ -15,7 +19,9 @@ fn main() {
     });
 }
 
-fn render<FN: FnMut(&mut PietWgpu) + Sized + 'static>(mut fun: FN) {
+fn render<FN: FnMut(&mut PietWgpu<WgpuImmediateTesselationRenderer>) + Sized + 'static>(
+    mut fun: FN,
+) {
     pretty_env_logger::formatted_timed_builder()
         .filter_level(log::LevelFilter::Info)
         .init();
@@ -55,7 +61,7 @@ fn render<FN: FnMut(&mut PietWgpu) + Sized + 'static>(mut fun: FN) {
     });
 }
 
-fn create_window() -> (Window, EventLoop<()>, PietWgpu) {
+fn create_window() -> (Window, EventLoop<()>, ImmediateRenderer) {
     let event_loop = EventLoopBuilder::new().build();
 
     let window = WindowBuilder::new()
@@ -63,8 +69,17 @@ fn create_window() -> (Window, EventLoop<()>, PietWgpu) {
         .build(&event_loop)
         .unwrap();
 
+    let renderer = WgpuImmediateTesselationRenderer::new(
+        &window,
+        window.inner_size().width,
+        window.inner_size().height,
+        window.scale_factor(),
+    )
+    .unwrap();
+
     let renderer = PietWgpu::new(
         &window,
+        renderer,
         window.inner_size().width,
         window.inner_size().height,
         window.scale_factor(),

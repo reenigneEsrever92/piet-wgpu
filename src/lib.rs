@@ -1,35 +1,37 @@
 mod data;
+mod error;
+pub mod immediate;
 mod renderer;
+mod settings;
 mod text;
 
-use std::collections::VecDeque;
+use std::{borrow::Cow, ops::Deref};
 
-use lyon::{
-    geom::point,
-    lyon_tessellation::{
-        BuffersBuilder, FillOptions, FillTessellator, FillVertexConstructor, VertexBuffers,
-    },
-    path::Path,
-};
 pub use piet::kurbo::*;
 pub use piet::*;
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
-use renderer::WgpuImmediateTesselationRenderer;
+use renderer::WgpuRenderer;
 use text::{WgpuText, WgpuTextLayout};
 
-pub struct PietWgpu {
-    pub renderer: WgpuImmediateTesselationRenderer,
+pub struct PietWgpu<T>
+where
+    T: WgpuRenderer + Sized,
+{
+    pub renderer: T,
     pub window: WgpuWindow,
 }
 
-impl PietWgpu {
+impl<T> PietWgpu<T>
+where
+    T: WgpuRenderer,
+{
     pub fn new<W: HasRawWindowHandle + HasRawDisplayHandle>(
         window: &W,
+        renderer: T,
         width: u32,
         height: u32,
         scale: f64,
     ) -> Self {
-        let renderer = WgpuImmediateTesselationRenderer::new(window, width, height, scale).unwrap();
         let window = WgpuWindow::new(width, height, scale);
 
         let mut piet_wgpu = Self { renderer, window };
@@ -71,13 +73,13 @@ pub enum WgpuBrush {
     Gradient(FixedGradient),
 }
 
-impl IntoBrush<PietWgpu> for WgpuBrush {
+impl<T: WgpuRenderer> IntoBrush<PietWgpu<T>> for WgpuBrush {
     fn make_brush<'a>(
         &'a self,
-        piet: &mut PietWgpu,
+        piet: &mut PietWgpu<T>,
         bbox: impl FnOnce() -> kurbo::Rect,
-    ) -> std::borrow::Cow<'a, <PietWgpu as RenderContext>::Brush> {
-        todo!()
+    ) -> std::borrow::Cow<'a, <PietWgpu<T> as RenderContext>::Brush> {
+        Cow::Owned(WgpuBrush::Solid(Color::grey(0.5))) // TODO
     }
 }
 
@@ -90,7 +92,7 @@ impl piet::Image for WgpuImage {
     }
 }
 
-impl piet::RenderContext for PietWgpu {
+impl<T: WgpuRenderer> piet::RenderContext for PietWgpu<T> {
     type Brush = WgpuBrush;
 
     type Text = WgpuText;
@@ -112,7 +114,12 @@ impl piet::RenderContext for PietWgpu {
     }
 
     fn clear(&mut self, region: impl Into<Option<kurbo::Rect>>, color: Color) {
-        todo!()
+        let (r, g, b, a) = color.as_rgba();
+        let region: Option<kurbo::Rect> = region.into();
+        match region {
+            Some(rect) => todo!(),
+            None => self.renderer.clear_all(wgpu::Color { r, g, b, a }),
+        }
     }
 
     fn stroke(&mut self, shape: impl kurbo::Shape, brush: &impl IntoBrush<Self>, width: f64) {
@@ -130,8 +137,11 @@ impl piet::RenderContext for PietWgpu {
     }
 
     fn fill(&mut self, shape: impl Shape, brush: &impl IntoBrush<Self>) {
+        let brush: std::borrow::Cow<'_, WgpuBrush> =
+            brush.make_brush(self, || Rect::new(0.0, 0.0, 0.0, 0.0)); // TODO implement bounding box
+
         if let Some(rect) = shape.as_rect() {
-            self.renderer.fill_rect(rect, brush);
+            self.renderer.fill_rect(rect, brush.deref());
         }
     }
 
@@ -160,7 +170,9 @@ impl piet::RenderContext for PietWgpu {
     }
 
     fn finish(&mut self) -> Result<(), Error> {
-        self.renderer.finish()
+        self.renderer
+            .finish()
+            .map_err(|e| piet::Error::BackendError(Box::new(e)))
     }
 
     fn transform(&mut self, transform: kurbo::Affine) {
