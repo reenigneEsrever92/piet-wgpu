@@ -7,6 +7,7 @@ mod text;
 
 use std::{borrow::Cow, ops::Deref};
 
+use image::{DynamicImage, GenericImageView};
 pub use piet::kurbo::*;
 pub use piet::*;
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
@@ -84,11 +85,25 @@ impl<T: WgpuRenderer> IntoBrush<PietWgpu<T>> for WgpuBrush {
 }
 
 #[derive(Clone)]
-pub struct WgpuImage;
+pub struct WgpuImage {
+    image: DynamicImage,
+}
+
+impl WgpuImage {
+    fn from_bytes(bytes: &[u8]) -> Self {
+        let image = image::load_from_memory(bytes).unwrap();
+        Self { image }
+    }
+}
 
 impl piet::Image for WgpuImage {
     fn size(&self) -> Size {
-        todo!()
+        let (width, height) = self.image.dimensions();
+
+        Size {
+            width: width.into(),
+            height: height.into(),
+        }
     }
 }
 
