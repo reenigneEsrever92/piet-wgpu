@@ -4,12 +4,10 @@ use winit::{
     dpi::LogicalSize,
     event::{ElementState, KeyboardInput, VirtualKeyCode, WindowEvent},
     event_loop::{ControlFlow, EventLoop, EventLoopBuilder},
-    platform::unix::EventLoopBuilderExtUnix,
     window::{Window, WindowBuilder},
 };
 
-#[test]
-fn test_init() {
+fn main() {
     render(|renderer| {
         let brush = renderer.solid_brush(Color::rgb(1.0, 0.0, 0.0));
         renderer.fill(Rect::new(-0.5, -0.5, 0.5, 0.5), &brush);
@@ -58,7 +56,7 @@ fn render<FN: FnMut(&mut PietWgpu) + Sized + 'static>(mut fun: FN) {
 }
 
 fn create_window() -> (Window, EventLoop<()>, PietWgpu) {
-    let event_loop = EventLoopBuilder::new().with_any_thread(true).build();
+    let event_loop = EventLoopBuilder::new().build();
 
     let window = WindowBuilder::new()
         .with_inner_size(LogicalSize::new(600, 600))
