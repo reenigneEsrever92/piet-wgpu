@@ -123,7 +123,7 @@ impl WgpuImmediateRenderer {
             label: Some("Vertex Buffer"),
             size: config.vertex_buffer_size,
             usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
-            mapped_at_creation: true,
+            mapped_at_creation: false,
         });
 
         // let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -136,7 +136,7 @@ impl WgpuImmediateRenderer {
             label: Some("Index Buffer"),
             size: config.index_buffer_size,
             usage: BufferUsages::INDEX | BufferUsages::COPY_DST,
-            mapped_at_creation: true,
+            mapped_at_creation: false,
         });
 
         // let index_buffer = self
@@ -205,17 +205,23 @@ impl WgpuImmediateRenderer {
     }
 
     fn append_geometry(&mut self, geometry: VertexBuffers<Vertex, u16>) {
-        // let vertecies = self.device.create_buffer_init(&BufferInitDescriptor {
-        //     label: Some("Copy Buffer"),
-        //     usage: BufferUsages::COPY_SRC,
-        //     contents: bytemuck::cast_slice(&geometry.vertices),
-        // });
+        let vertecies = self.device.create_buffer_init(&BufferInitDescriptor {
+            label: Some("Copy Buffer"),
+            usage: BufferUsages::COPY_SRC,
+            contents: bytemuck::cast_slice(&geometry.vertices),
+        });
 
-        // let indicies = self.device.create_buffer_init(&BufferInitDescriptor {
-        //     label: Some("Copy Buffer"),
-        //     usage: BufferUsages::COPY_SRC,
-        //     contents: bytemuck::cast_slice(&geometry.indices),
-        // });
+        let indicies = self.device.create_buffer_init(&BufferInitDescriptor {
+            label: Some("Copy Buffer"),
+            usage: BufferUsages::COPY_SRC,
+            contents: bytemuck::cast_slice(
+                &geometry
+                    .indices
+                    .iter()
+                    .map(|index| *index + self.num_vertecies as u16)
+                    .collect::<Vec<u16>>(),
+            ),
+        });
 
         // self.vertex_buffer
         //     .slice(
@@ -235,24 +241,24 @@ impl WgpuImmediateRenderer {
         //     .get_mapped_range_mut()
         //     .copy_from_slice(bytemuck::cast_slice(&geometry.indices));
 
-        // self.encoder.copy_buffer_to_buffer(
-        //     &vertecies,
-        //     0,
-        //     &self.vertex_buffer,
-        //     std::mem::size_of::<Vertex>() as u64 * self.num_vertecies,
-        //     std::mem::size_of::<Vertex>() as u64 * geometry.vertices.len() as u64,
-        // );
+        self.encoder.copy_buffer_to_buffer(
+            &vertecies,
+            0,
+            &self.vertex_buffer,
+            std::mem::size_of::<Vertex>() as u64 * self.num_vertecies,
+            std::mem::size_of::<Vertex>() as u64 * geometry.vertices.len() as u64,
+        );
 
-        // self.encoder.copy_buffer_to_buffer(
-        //     &indicies,
-        //     0,
-        //     &self.index_buffer,
-        //     std::mem::size_of::<u16>() as u64 * self.num_indecies,
-        //     std::mem::size_of::<u16>() as u64 * geometry.indices.len() as u64,
-        // );
+        self.encoder.copy_buffer_to_buffer(
+            &indicies,
+            0,
+            &self.index_buffer,
+            std::mem::size_of::<u16>() as u64 * self.num_indecies,
+            std::mem::size_of::<u16>() as u64 * geometry.indices.len() as u64,
+        );
 
-        // self.num_vertecies += geometry.vertices.len() as u64;
-        // self.num_indecies += geometry.indices.len() as u64;
+        self.num_vertecies += geometry.vertices.len() as u64;
+        self.num_indecies += geometry.indices.len() as u64;
     }
 }
 
@@ -331,14 +337,14 @@ impl WgpuRenderer for WgpuImmediateRenderer {
         // render_pass borrows encoder
         drop(render_pass);
 
+        // create and swap encoders to work around finish() consuming the encoder
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Render Encoder"),
             });
 
-        // swap encoders to work around finish() consuming the encoder
-        // std::mem::swap(&mut self.encoder, &mut encoder);
+        std::mem::swap(&mut self.encoder, &mut encoder);
 
         self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
@@ -347,26 +353,25 @@ impl WgpuRenderer for WgpuImmediateRenderer {
     }
 
     fn draw_image(&mut self, rect: kurbo::Rect, image: &WgpuImage) {
-        todo!()
-        // let texture_size = wgpu::Extent3d {
-        //     width: dimensions.0,
-        //     height: dimensions.1,
-        //     depth_or_array_layers: 1,
-        // };
+        let texture_size = wgpu::Extent3d {
+            width: image.dynamic.width(),
+            height: image.dynamic.height(),
+            depth_or_array_layers: 1,
+        };
 
-        // let diffuse_texture = device.create_texture(&wgpu::TextureDescriptor {
-        //     // All textures are stored as 3D, we represent our 2D texture
-        //     // by setting depth to 1.
-        //     size: texture_size,
-        //     mip_level_count: 1, // We'll talk about this a little later
-        //     sample_count: 1,
-        //     dimension: wgpu::TextureDimension::D2,
-        //     // Most images are stored using sRGB so we need to reflect that here.
-        //     format: wgpu::TextureFormat::Rgba8UnormSrgb,
-        //     // TEXTURE_BINDING tells wgpu that we want to use this texture in shaders
-        //     // COPY_DST means that we want to copy data to this texture
-        //     usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        //     label: Some("diffuse_texture"),
-        // });
+        let diffuse_texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            // All textures are stored as 3D, we represent our 2D texture
+            // by setting depth to 1.
+            size: texture_size,
+            mip_level_count: 1, // We'll talk about this a little later
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            // Most images are stored using sRGB so we need to reflect that here.
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            // TEXTURE_BINDING tells wgpu that we want to use this texture in shaders
+            // COPY_DST means that we want to copy data to this texture
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            label: Some("diffuse_texture"),
+        });
     }
 }

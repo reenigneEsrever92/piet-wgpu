@@ -86,19 +86,19 @@ impl<T: WgpuRenderer> IntoBrush<PietWgpu<T>> for WgpuBrush {
 
 #[derive(Clone)]
 pub struct WgpuImage {
-    image: DynamicImage,
+    dynamic: DynamicImage,
 }
 
 impl WgpuImage {
     pub fn from_bytes(bytes: &[u8]) -> Self {
         let image = image::load_from_memory(bytes).unwrap();
-        Self { image }
+        Self { dynamic: image }
     }
 }
 
 impl piet::Image for WgpuImage {
     fn size(&self) -> Size {
-        let (width, height) = self.image.dimensions();
+        let (width, height) = self.dynamic.dimensions();
 
         Size {
             width: width.into(),
