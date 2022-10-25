@@ -1,8 +1,8 @@
+mod config;
 mod data;
 mod error;
 pub mod immediate;
 mod renderer;
-mod settings;
 mod text;
 
 use std::{borrow::Cow, ops::Deref};
@@ -90,7 +90,7 @@ pub struct WgpuImage {
 }
 
 impl WgpuImage {
-    fn from_bytes(bytes: &[u8]) -> Self {
+    pub fn from_bytes(bytes: &[u8]) -> Self {
         let image = image::load_from_memory(bytes).unwrap();
         Self { image }
     }

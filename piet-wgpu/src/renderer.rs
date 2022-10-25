@@ -10,7 +10,7 @@ use wgpu::util::DeviceExt;
 use crate::{
     data::{Primitive, Vertex, VertexBuilder},
     error::Result,
-    PietWgpu, WgpuBrush,
+    PietWgpu, WgpuBrush, WgpuImage,
 };
 
 pub trait WgpuRenderer {
@@ -18,8 +18,9 @@ pub trait WgpuRenderer {
 
     fn set_size(&mut self, width: u32, height: u32);
     fn fill_rect(&mut self, rect: kurbo::Rect, brush: &WgpuBrush);
+    fn draw_image(&mut self, rect: kurbo::Rect, image: &WgpuImage);
     fn clear_all(&mut self, color: wgpu::Color);
-    fn finish(&self) -> Result<()>;
+    fn finish(&mut self) -> Result<()>;
 }
 
 // let globals_buffer_byte_size = std::mem::size_of::<Globals>() as u64;

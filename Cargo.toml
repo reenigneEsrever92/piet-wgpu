@@ -1,26 +1,4 @@
-[package]
-name = "piet-wgpu"
-version = "0.1.0"
-edition = "2018"
+[workspace]
+
 resolver = "2"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-[dependencies]
-log = "0.4.14"
-linked-hash-map = "0.5.4"
-pathfinder_geometry = "0.5.1"
-lyon = "1.0"
-piet = "0.5.0"
-wgpu = { version = "0.14.0", features = ["spirv"] }
-futures = "0.3.17"
-raw-window-handle = "0.5"
-bytemuck = { version = "1.7.2", features = ["derive"] }
-static_assertions = "1.1"
-thiserror = "1.0"
-kurbo = "0.8"
-image = { version = "*", default-features = false, features = ["jpeg", "png"] }
-
-[dev-dependencies]
-winit = "0.27"
-pretty_env_logger = "0.4"
+members = ["piet-wgpu", "piet-wgpu-samples"]

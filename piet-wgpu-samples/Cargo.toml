@@ -1,0 +1,12 @@
+[package]
+name = "piet-wgpu-samples"
+version = "0.1.0"
+edition = "2021"
+
+
+[dependencies]
+winit = "0.27"
+piet-wgpu = { path = "../piet-wgpu" }
+log = "0.4"
+pretty_env_logger = "0.4"
+piet = "0.5"

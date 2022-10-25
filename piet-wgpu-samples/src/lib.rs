@@ -1,8 +1,8 @@
 use log::warn;
+use piet::RenderContext;
 use piet_wgpu::{
-    immediate::{ImmediateRenderer, WgpuImmediateTesselationRenderer},
-    kurbo::Rect,
-    Color, PietWgpu, RenderContext,
+    immediate::{ImmediateRenderer, WgpuImmediateRenderer},
+    PietWgpu,
 };
 use winit::{
     dpi::LogicalSize,
@@ -11,17 +11,7 @@ use winit::{
     window::{Window, WindowBuilder},
 };
 
-fn main() {
-    render(|renderer| {
-        let brush = renderer.solid_brush(Color::rgb(1.0, 0.0, 0.0));
-        renderer.fill(Rect::new(-0.5, -0.5, 0.5, 0.5), &brush);
-        renderer.fill(Rect::new(-1.0, -1.0, -0.5, -0.5), &brush);
-    });
-}
-
-fn render<FN: FnMut(&mut PietWgpu<WgpuImmediateTesselationRenderer>) + Sized + 'static>(
-    mut fun: FN,
-) {
+pub fn render<FN: FnMut(&mut PietWgpu<WgpuImmediateRenderer>) + Sized + 'static>(mut fun: FN) {
     pretty_env_logger::formatted_timed_builder()
         .filter_level(log::LevelFilter::Info)
         .init();
@@ -61,7 +51,7 @@ fn render<FN: FnMut(&mut PietWgpu<WgpuImmediateTesselationRenderer>) + Sized + '
     });
 }
 
-fn create_window() -> (Window, EventLoop<()>, ImmediateRenderer) {
+pub fn create_window() -> (Window, EventLoop<()>, ImmediateRenderer) {
     let event_loop = EventLoopBuilder::new().build();
 
     let window = WindowBuilder::new()
@@ -69,7 +59,7 @@ fn create_window() -> (Window, EventLoop<()>, ImmediateRenderer) {
         .build(&event_loop)
         .unwrap();
 
-    let renderer = WgpuImmediateTesselationRenderer::new(
+    let renderer = WgpuImmediateRenderer::new(
         &window,
         window.inner_size().width,
         window.inner_size().height,
