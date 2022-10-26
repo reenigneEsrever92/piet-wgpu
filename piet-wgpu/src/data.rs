@@ -5,18 +5,30 @@ use lyon::lyon_tessellation::FillVertexConstructor;
 pub struct Vertex {
     pub position: [f32; 3],
     pub color: [f32; 4],
+    pub tex_coords: [f32; 2],
 }
 
 unsafe impl bytemuck::Pod for Vertex {}
 unsafe impl bytemuck::Zeroable for Vertex {}
 
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+pub struct TexVertex {
+    pub position: [f32; 3],
+}
+
+unsafe impl bytemuck::Pod for TexVertex {}
+unsafe impl bytemuck::Zeroable for TexVertex {}
+
+// this one is needed by lyon for tessellation
 pub struct VertexBuilder;
 
 impl FillVertexConstructor<Vertex> for VertexBuilder {
     fn new_vertex(&mut self, vertex: lyon::tessellation::FillVertex) -> Vertex {
         Vertex {
-            position: [vertex.position().x, vertex.position().y, 1.0], // z is zero for now
-            color: [1.0, 0.0, 0.0, 1.0],                               // make it red
+            position: [vertex.position().x, vertex.position().y, 0.0], // z is zero for now
+            color: [0.0, 0.0, 0.0, 1.0],                               // make it black
+            tex_coords: [0.0, 0.0],                                    // no texture
         }
     }
 }

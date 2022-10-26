@@ -210,7 +210,7 @@ impl<T: WgpuRenderer> piet::RenderContext for PietWgpu<T> {
         dst_rect: impl Into<kurbo::Rect>,
         interp: InterpolationMode,
     ) {
-        todo!()
+        self.renderer.draw_image(dst_rect.into(), image);
     }
 
     fn draw_image_area(

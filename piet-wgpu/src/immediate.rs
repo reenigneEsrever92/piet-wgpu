@@ -1,13 +1,17 @@
+use std::{num::NonZeroU32, path::PathBuf};
+
 use lyon::{
-    lyon_tessellation::{BuffersBuilder, FillOptions, FillTessellator, VertexBuffers},
+    lyon_tessellation::{
+        geometry_builder, BuffersBuilder, FillOptions, FillTessellator, VertexBuffers,
+    },
     math::point,
-    path::Path,
+    path::{traits::PathBuilder, Path},
 };
 use piet::{kurbo::Rect, IntoBrush};
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
-    BufferUsages,
+    BindGroupLayout, BufferUsages, Extent3d,
 };
 
 use crate::{
@@ -31,10 +35,11 @@ pub struct WgpuImmediateRenderer {
     num_vertecies: u64,
     index_buffer: wgpu::Buffer,
     num_indecies: u64,
-    // image_buffer: wgpu::Buffer,
+    texture_buffer: wgpu::Texture, // one buffer for all images
+    texture_sampler: wgpu::Sampler,
+    texture_bind_group_layout: BindGroupLayout,
     pipeline: wgpu::RenderPipeline,
     surface_config: wgpu::SurfaceConfiguration,
-    images: Vec<WgpuImage>,
     clear_color: wgpu::Color,
 }
 static_assertions::assert_impl_all!(WgpuImmediateRenderer: Send, Sync);
@@ -93,17 +98,10 @@ impl WgpuImmediateRenderer {
             source: wgpu::ShaderSource::Wgsl(include_str!("./../shaders/simple.wgsl").into()),
         });
 
-        let render_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[],
-                push_constant_ranges: &[],
-            });
-
         let vertex_buffer_layout = wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x4],
+            attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x4, 2 => Float32x2],
             // shorthand for:
             // &[
             //     wgpu::VertexAttribute {
@@ -147,6 +145,65 @@ impl WgpuImmediateRenderer {
         //         usage: wgpu::BufferUsages::INDEX,
         //     });
 
+        let texture_size = wgpu::Extent3d {
+            // TODO use config
+            width: 4 * 256,
+            height: 256,
+            depth_or_array_layers: 1,
+        };
+
+        let texture_buffer = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("diffuse_texture"),
+            size: texture_size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        });
+
+        let texture_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+
+        let texture_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        // This should match the filterable field of the
+                        // corresponding Texture entry above.
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+                label: Some("texture_bind_group_layout"),
+            });
+
+        let render_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Render Pipeline Layout"),
+                bind_group_layouts: &[&texture_bind_group_layout],
+                push_constant_ranges: &[],
+            });
+
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Render Pipeline"),
             layout: Some(&render_pipeline_layout),
@@ -184,8 +241,6 @@ impl WgpuImmediateRenderer {
 
         let clear_color = wgpu::Color::WHITE;
 
-        let images = Vec::new();
-
         Ok(Self {
             instance,
             surface,
@@ -199,7 +254,9 @@ impl WgpuImmediateRenderer {
             num_vertecies: 0,
             index_buffer,
             num_indecies: 0,
-            images,
+            texture_bind_group_layout,
+            texture_buffer,
+            texture_sampler,
             clear_color,
         })
     }
@@ -223,24 +280,6 @@ impl WgpuImmediateRenderer {
             ),
         });
 
-        // self.vertex_buffer
-        //     .slice(
-        //         self.num_vertecies * std::mem::size_of::<Vertex>() as u64
-        //             ..(self.num_vertecies + geometry.vertices.len() as u64)
-        //                 * std::mem::size_of::<Vertex>() as u64,
-        //     )
-        //     .get_mapped_range_mut()
-        //     .copy_from_slice(bytemuck::cast_slice(&geometry.vertices));
-
-        // self.index_buffer
-        //     .slice(
-        //         self.num_indecies * std::mem::size_of::<u16>() as u64
-        //             ..(self.num_indecies + geometry.indices.len() as u64)
-        //                 * std::mem::size_of::<u16>() as u64,
-        //     )
-        //     .get_mapped_range_mut()
-        //     .copy_from_slice(bytemuck::cast_slice(&geometry.indices));
-
         self.encoder.copy_buffer_to_buffer(
             &vertecies,
             0,
@@ -260,6 +299,21 @@ impl WgpuImmediateRenderer {
         self.num_vertecies += geometry.vertices.len() as u64;
         self.num_indecies += geometry.indices.len() as u64;
     }
+
+    fn tesselate_fill(&self, path: Path) -> VertexBuffers<Vertex, u16> {
+        let mut tesselation_buffer = VertexBuffers::new();
+        let mut fill_tess = FillTessellator::new();
+
+        fill_tess
+            .tessellate(
+                &path,
+                &FillOptions::tolerance(0.02).with_fill_rule(lyon::tessellation::FillRule::NonZero),
+                &mut BuffersBuilder::new(&mut tesselation_buffer, VertexBuilder),
+            )
+            .unwrap();
+
+        tesselation_buffer
+    }
 }
 
 impl WgpuRenderer for WgpuImmediateRenderer {
@@ -273,10 +327,6 @@ impl WgpuRenderer for WgpuImmediateRenderer {
     }
 
     fn fill_rect(&mut self, rect: Rect, brush: &WgpuBrush) {
-        let mut tesselation_buffer: VertexBuffers<Vertex, u16> = VertexBuffers::new();
-
-        let mut fill_tess = FillTessellator::new();
-
         let mut builder = Path::builder();
 
         builder.begin(point(rect.x0 as f32, rect.y0 as f32));
@@ -289,15 +339,9 @@ impl WgpuRenderer for WgpuImmediateRenderer {
         let path = builder.build();
 
         // tesselates geometries
-        fill_tess
-            .tessellate(
-                &path,
-                &FillOptions::tolerance(0.02).with_fill_rule(lyon::tessellation::FillRule::NonZero),
-                &mut BuffersBuilder::new(&mut tesselation_buffer, VertexBuilder),
-            )
-            .unwrap();
+        let geometry = self.tesselate_fill(path);
 
-        self.append_geometry(tesselation_buffer);
+        self.append_geometry(geometry);
     }
 
     fn clear_all(&mut self, color: wgpu::Color) {
@@ -315,6 +359,27 @@ impl WgpuRenderer for WgpuImmediateRenderer {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
+        // prepare textures
+        let texture_view = self
+            .texture_buffer
+            .create_view(&wgpu::TextureViewDescriptor::default());
+
+        let texture_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("diffuse_bind_group"),
+            layout: &self.texture_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.texture_sampler),
+                },
+            ],
+        });
+
+        // prepare render pass
         let mut render_pass = self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Render Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -329,6 +394,7 @@ impl WgpuRenderer for WgpuImmediateRenderer {
         });
 
         render_pass.set_pipeline(&self.pipeline);
+        render_pass.set_bind_group(0, &texture_bind_group, &[]);
         render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
         render_pass.draw_indexed(0..self.num_indecies as u32, 0, 0..1);
@@ -353,25 +419,66 @@ impl WgpuRenderer for WgpuImmediateRenderer {
     }
 
     fn draw_image(&mut self, rect: kurbo::Rect, image: &WgpuImage) {
+        let rgba_image = image.dynamic.as_rgba8().unwrap();
+
         let texture_size = wgpu::Extent3d {
-            width: image.dynamic.width(),
-            height: image.dynamic.height(),
+            width: rgba_image.width(),
+            height: rgba_image.height(),
             depth_or_array_layers: 1,
         };
 
-        let diffuse_texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            // All textures are stored as 3D, we represent our 2D texture
-            // by setting depth to 1.
-            size: texture_size,
-            mip_level_count: 1, // We'll talk about this a little later
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            // Most images are stored using sRGB so we need to reflect that here.
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            // TEXTURE_BINDING tells wgpu that we want to use this texture in shaders
-            // COPY_DST means that we want to copy data to this texture
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            label: Some("diffuse_texture"),
-        });
+        // copy image data to image buffer
+        self.queue.write_texture(
+            // Tells wgpu where to copy the pixel data
+            wgpu::ImageCopyTexture {
+                texture: &self.texture_buffer,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            // The actual pixel data
+            rgba_image,
+            // The layout of the texture
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: std::num::NonZeroU32::new(4 * image.dynamic.width()),
+                rows_per_image: std::num::NonZeroU32::new(image.dynamic.height()),
+            },
+            texture_size,
+        );
+
+        let mut builder = Path::builder();
+
+        builder.begin(point(rect.x0 as f32, rect.y0 as f32));
+        builder.line_to(point(rect.x0 as f32, rect.y1 as f32));
+        builder.line_to(point(rect.x1 as f32, rect.y1 as f32));
+        builder.line_to(point(rect.x1 as f32, rect.y0 as f32));
+
+        builder.close();
+
+        let path = builder.build();
+
+        let mut geometry = self.tesselate_fill(path);
+
+        // map tex_coords
+        let vertecies = geometry
+            .vertices
+            .iter()
+            .enumerate()
+            .map(|(index, vertex)| Vertex {
+                tex_coords: match index {
+                    0 => [0.0, 0.0],
+                    1 => [0.0, 1.0],
+                    2 => [1.0, 0.0],
+                    3 => [1.0, 1.0],
+                    _ => panic!(),
+                },
+                ..*vertex
+            })
+            .collect::<Vec<Vertex>>();
+
+        geometry.vertices = vertecies;
+
+        self.append_geometry(geometry);
     }
 }
