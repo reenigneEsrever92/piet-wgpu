@@ -26,7 +26,7 @@ fn vs_main(
     model: VertexInput,
 ) -> VertexOutput {
     var invert_y = vec4<f32>(1.0, -1.0, 1.0, 1.0);
-    var position = (model.position / vec4<f32>(globals.resolution, 1.0, 1.0) - vec4<f32>(1.0, 1.0, 0.0, 0.0)) * invert_y * globals.scale_factor;
+    var position = (model.position / vec4<f32>(globals.resolution, 1.0, 1.0) * globals.scale_factor - vec4<f32>(1.0, 1.0, 0.0, 0.0)) * invert_y;
     // var position = model.position / (0.5 * vec4<f32>(globals.resolution, 1.0, 1.0)) * invert_y;
     
     // vec4<f32>(
