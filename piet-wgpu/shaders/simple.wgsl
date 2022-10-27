@@ -25,12 +25,17 @@ struct VertexOutput {
 fn vs_main(
     model: VertexInput,
 ) -> VertexOutput {
-    var out: VertexOutput;
-    out.color = model.color;
-    out.tex_coords = model.tex_coords;
-    // invert y - todo matrix multiply
-    out.clip_position = vec4<f32>(model.position.xyz.x, model.position.xyz.y * -1.0, model.position.xyz.z, 1.0);
-    return out;
+    var invert_y = vec4<f32>(1.0, -1.0, 1.0, 1.0);
+    var position = (model.position / vec4<f32>(globals.resolution, 1.0, 1.0) - vec4<f32>(1.0, 1.0, 0.0, 0.0)) * invert_y * globals.scale_factor;
+    // var position = model.position / (0.5 * vec4<f32>(globals.resolution, 1.0, 1.0)) * invert_y;
+    
+    // vec4<f32>(
+    //     model.position.xyz.x + 1.0 * globals.resolution.xyz.x, 
+    //     model.position.xyz.y * -1.0 + 1.0 * globals.resolution.xyz.y, 
+    //     model.position.xyz.z, 1.0
+    // );
+
+    return VertexOutput(position, model.color, model.tex_coords);
 }
 
 @fragment

@@ -411,6 +411,7 @@ impl WgpuRenderer for WgpuImmediateRenderer {
             ],
         });
 
+        // TODO move to set_size or something
         let globals = Globals {
             resolution: [
                 self.surface_config.width as f32,
@@ -465,6 +466,8 @@ impl WgpuRenderer for WgpuImmediateRenderer {
 
         std::mem::swap(&mut self.encoder, &mut encoder);
 
+        self.queue
+            .write_buffer(&self.globals_buffer, 0, bytemuck::cast_slice(&[globals]));
         self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
 
