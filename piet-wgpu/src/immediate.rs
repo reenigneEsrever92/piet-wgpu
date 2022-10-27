@@ -1,4 +1,7 @@
-use std::{num::NonZeroU32, path::PathBuf};
+use std::{
+    num::{NonZeroU32, NonZeroU64},
+    path::PathBuf,
+};
 
 use lyon::{
     lyon_tessellation::{
@@ -11,12 +14,13 @@ use piet::{kurbo::Rect, IntoBrush};
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
-    BindGroupLayout, BufferUsages, Extent3d,
+    BindGroupDescriptor, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry,
+    BufferUsages, Extent3d,
 };
 
 use crate::{
     config::Config,
-    data::{Vertex, VertexBuilder},
+    data::{Globals, Vertex, VertexBuilder},
     error::Result,
     renderer::WgpuRenderer,
     PietWgpu, WgpuBrush, WgpuImage,
@@ -25,6 +29,7 @@ use crate::{
 pub type ImmediateRenderer = PietWgpu<WgpuImmediateRenderer>;
 
 pub struct WgpuImmediateRenderer {
+    scale: f64,
     instance: wgpu::Instance,
     surface: wgpu::Surface,
     adapter: wgpu::Adapter,
@@ -38,6 +43,8 @@ pub struct WgpuImmediateRenderer {
     texture_buffer: wgpu::Texture, // one buffer for all images
     texture_sampler: wgpu::Sampler,
     texture_bind_group_layout: BindGroupLayout,
+    globals_buffer: wgpu::Buffer,
+    globals_bind_group_layout: BindGroupLayout,
     pipeline: wgpu::RenderPipeline,
     surface_config: wgpu::SurfaceConfiguration,
     clear_color: wgpu::Color,
@@ -83,6 +90,28 @@ impl WgpuImmediateRenderer {
         let encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Render Encoder"),
         });
+
+        let globals_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Globals Buffer"),
+            size: std::mem::size_of::<Globals>() as u64,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let globals_bind_group_layout =
+            device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+                label: Some("Global Bind Group Layout"),
+                entries: &[BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: NonZeroU64::new(std::mem::size_of::<Globals>() as u64),
+                    },
+                    count: None,
+                }],
+            });
 
         let surface_config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -175,7 +204,7 @@ impl WgpuImmediateRenderer {
         let texture_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 entries: &[
-                    wgpu::BindGroupLayoutEntry {
+                    BindGroupLayoutEntry {
                         binding: 0,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Texture {
@@ -185,7 +214,7 @@ impl WgpuImmediateRenderer {
                         },
                         count: None,
                     },
-                    wgpu::BindGroupLayoutEntry {
+                    BindGroupLayoutEntry {
                         binding: 1,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         // This should match the filterable field of the
@@ -200,7 +229,7 @@ impl WgpuImmediateRenderer {
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[&texture_bind_group_layout],
+                bind_group_layouts: &[&globals_bind_group_layout, &texture_bind_group_layout],
                 push_constant_ranges: &[],
             });
 
@@ -242,6 +271,7 @@ impl WgpuImmediateRenderer {
         let clear_color = wgpu::Color::WHITE;
 
         Ok(Self {
+            scale,
             instance,
             surface,
             adapter,
@@ -257,6 +287,8 @@ impl WgpuImmediateRenderer {
             texture_bind_group_layout,
             texture_buffer,
             texture_sampler,
+            globals_buffer,
+            globals_bind_group_layout,
             clear_color,
         })
     }
@@ -379,6 +411,26 @@ impl WgpuRenderer for WgpuImmediateRenderer {
             ],
         });
 
+        let globals = Globals {
+            resolution: [
+                self.surface_config.width as f32,
+                self.surface_config.height as f32,
+            ],
+            scale_factor: self.scale as f32,
+            _pad: 0.0,
+        };
+
+        let globals_bind_group = self.device.create_bind_group(&BindGroupDescriptor {
+            label: Some("Globals Bind Group"),
+            layout: &self.globals_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(
+                    self.globals_buffer.as_entire_buffer_binding(),
+                ),
+            }],
+        });
+
         // prepare render pass
         let mut render_pass = self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Render Pass"),
@@ -394,7 +446,8 @@ impl WgpuRenderer for WgpuImmediateRenderer {
         });
 
         render_pass.set_pipeline(&self.pipeline);
-        render_pass.set_bind_group(0, &texture_bind_group, &[]);
+        render_pass.set_bind_group(0, &globals_bind_group, &[]);
+        render_pass.set_bind_group(1, &texture_bind_group, &[]);
         render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
         render_pass.draw_indexed(0..self.num_indecies as u32, 0, 0..1);

@@ -36,10 +36,9 @@ impl FillVertexConstructor<Vertex> for VertexBuilder {
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct Globals {
-    resolution: [f32; 2],
-    scroll_offset: [f32; 2],
-    zoom: f32,
-    _pad: f32,
+    pub resolution: [f32; 2],
+    pub scale_factor: f32,
+    pub _pad: f32, // required by bind group layout
 }
 
 unsafe impl bytemuck::Pod for Globals {}
