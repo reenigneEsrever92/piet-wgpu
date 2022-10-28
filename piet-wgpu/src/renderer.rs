@@ -17,6 +17,7 @@ pub trait WgpuRenderer {
     type Renderer: WgpuRenderer;
 
     fn set_size(&mut self, width: u32, height: u32);
+    fn set_scale(&mut self, scale_factor: f64);
     fn fill_rect(&mut self, rect: kurbo::Rect, brush: &WgpuBrush);
     fn draw_image(&mut self, rect: kurbo::Rect, image: &WgpuImage);
     fn clear_all(&mut self, color: wgpu::Color);

@@ -3,7 +3,8 @@ use lyon::lyon_tessellation::FillVertexConstructor;
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 pub struct Vertex {
-    pub position: [f32; 3],
+    pub position: [f32; 2],
+    pub z_index: u32,
     pub color: [f32; 4],
     pub tex_coords: [f32; 2],
 }
@@ -26,9 +27,10 @@ pub struct VertexBuilder;
 impl FillVertexConstructor<Vertex> for VertexBuilder {
     fn new_vertex(&mut self, vertex: lyon::tessellation::FillVertex) -> Vertex {
         Vertex {
-            position: [vertex.position().x, vertex.position().y, 0.0], // z is zero for now
-            color: [0.0, 0.0, 0.0, 1.0],                               // make it black
-            tex_coords: [0.0, 0.0],                                    // no texture
+            position: [vertex.position().x, vertex.position().y], // z is zero for now
+            z_index: 1,
+            color: [0.0, 0.0, 0.0, 1.0], // make it black
+            tex_coords: [0.0, 0.0],      // no texture
         }
     }
 }

@@ -25,6 +25,14 @@ pub fn render<FN: FnMut(&mut PietWgpu<WgpuImmediateRenderer>) + Sized + 'static>
         match event {
             winit::event::Event::WindowEvent { window_id, event } if window_id == window.id() => {
                 match event {
+                    WindowEvent::ScaleFactorChanged {
+                        scale_factor,
+                        new_inner_size,
+                    } => {
+                        piet_wgpu.set_scale(scale_factor);
+                        piet_wgpu.set_size(new_inner_size.width, new_inner_size.height);
+                        piet_wgpu.finish().unwrap();
+                    }
                     WindowEvent::Resized(new_size) => {
                         piet_wgpu.set_size(new_size.width, new_size.height);
                         piet_wgpu.finish().unwrap();

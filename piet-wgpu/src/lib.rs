@@ -47,8 +47,9 @@ where
         self.renderer.set_size(width, height);
     }
 
-    pub fn set_scale(&mut self, scale: f64) {
-        self.window.scale = scale;
+    pub fn set_scale(&mut self, scale_factor: f64) {
+        self.window.scale = scale_factor;
+        self.renderer.set_scale(scale_factor);
     }
 }
 
