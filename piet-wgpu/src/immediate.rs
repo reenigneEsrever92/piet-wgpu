@@ -1,6 +1,7 @@
 use std::{
     num::{NonZeroU32, NonZeroU64},
     path::PathBuf,
+    primitive,
 };
 
 use lyon::{
@@ -62,9 +63,9 @@ impl WgpuImmediateRenderer {
         height: u32,
         scale: f64,
     ) -> Result<Self> {
-        Self::from_settings(window, width, height, scale, Default::default())
+        Self::from_config(window, width, height, scale, Default::default())
     }
-    pub fn from_settings<W: HasRawWindowHandle + HasRawDisplayHandle>(
+    pub fn from_config<W: HasRawWindowHandle + HasRawDisplayHandle>(
         window: &W,
         width: u32,
         height: u32,
@@ -147,7 +148,7 @@ impl WgpuImmediateRenderer {
         let prim_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Primitive Buffer"),
             size: config.primitve_buffer_size,
-            usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
@@ -226,7 +227,11 @@ impl WgpuImmediateRenderer {
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[&globals_bind_group_layout, &texture_bind_group_layout],
+                bind_group_layouts: &[
+                    &globals_bind_group_layout,
+                    &prim_buffer_bind_group_layout,
+                    &texture_bind_group_layout,
+                ],
                 push_constant_ranges: &[],
             });
 
@@ -346,6 +351,24 @@ impl WgpuImmediateRenderer {
 
         tesselation_buffer
     }
+
+    fn append_prim(&mut self, primitive: Primitive) {
+        let copy_buffer = self.device.create_buffer_init(&BufferInitDescriptor {
+            label: Some("Primitive Copy Buffer"),
+            contents: bytemuck::cast_slice(&[primitive]),
+            usage: BufferUsages::COPY_SRC,
+        });
+
+        self.encoder.copy_buffer_to_buffer(
+            &copy_buffer,
+            0,
+            &self.prim_buffer,
+            std::mem::size_of::<Primitive>() as u64 * self.prim_number as u64,
+            std::mem::size_of::<Primitive>() as u64,
+        );
+
+        self.prim_number += 1;
+    }
 }
 
 impl WgpuRenderer for WgpuImmediateRenderer {
@@ -364,7 +387,6 @@ impl WgpuRenderer for WgpuImmediateRenderer {
 
     fn fill_rect(&mut self, rect: Rect, brush: &WgpuBrush) {
         let prim_index = self.prim_number;
-        self.prim_number += 1;
 
         let mut builder = Path::builder();
 
@@ -381,12 +403,12 @@ impl WgpuRenderer for WgpuImmediateRenderer {
         let geometry = self.tesselate_fill(prim_index, path);
 
         self.append_geometry(geometry);
+        self.append_prim(Primitive::default())
     }
 
     fn draw_image(&mut self, rect: kurbo::Rect, image: &WgpuImage) {
-        let rgba_image = image.dynamic.as_rgba8().unwrap();
         let prim_index = self.prim_number;
-        self.prim_number += 1;
+        let rgba_image = image.dynamic.as_rgba8().unwrap();
 
         let texture_size = wgpu::Extent3d {
             width: rgba_image.width(),
@@ -425,14 +447,15 @@ impl WgpuRenderer for WgpuImmediateRenderer {
 
         let path = builder.build();
 
-        let mut geometry = self.tesselate_fill(prim_index, path);
+        let geometry = self.tesselate_fill(prim_index, path);
 
         let primitive = Primitive {
-            // TODO
+            tex_coords: [0.0, 0.0, 1.0, 1.0],
             ..Default::default()
         };
 
         self.append_geometry(geometry);
+        self.append_prim(primitive)
     }
 
     fn clear_all(&mut self, color: wgpu::Color) {

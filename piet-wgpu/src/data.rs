@@ -47,24 +47,27 @@ unsafe impl bytemuck::Zeroable for Globals {}
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct Primitive {
-    pub color: [f32; 4],
-    pub tex_cords: [f32; 2],
-    pub translate: [f32; 2],
-    pub z_index: i32,
-    pub angle: f32,
-    pub scale: f32,
-    pub _pad: i32,
+    pub color: [f32; 4],      // 16
+    pub tex_coords: [f32; 4], // 16
+    pub translate: [f32; 2],  // 8
+    pub z_index: i32,         // 4
+    pub angle: f32,           // 4
+    pub scale: f32,           // 4
+    pub _pad1: u32,           // 4
+    pub _pad2: u64,           // 8
+                              // 64
 }
 
 impl Primitive {
     const DEFAULT: Self = Primitive {
         color: [0.0, 0.0, 0.0, 1.0],
-        tex_cords: [0.0, 0.0],
+        tex_coords: [0.0, 0.0, 0.0, 0.0],
         translate: [0.0; 2],
         z_index: 0,
         angle: 0.0,
         scale: 1.0,
-        _pad: 0,
+        _pad1: 0,
+        _pad2: 0,
     };
 }
 
