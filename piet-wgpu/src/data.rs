@@ -4,9 +4,7 @@ use lyon::lyon_tessellation::FillVertexConstructor;
 #[derive(Copy, Clone, Debug)]
 pub struct Vertex {
     pub position: [f32; 2],
-    pub z_index: u32,
-    pub color: [f32; 4],
-    pub tex_coords: [f32; 2],
+    pub prim_index: u32,
 }
 
 unsafe impl bytemuck::Pod for Vertex {}
@@ -22,15 +20,15 @@ unsafe impl bytemuck::Pod for TexVertex {}
 unsafe impl bytemuck::Zeroable for TexVertex {}
 
 // this one is needed by lyon for tessellation
-pub struct VertexBuilder;
+pub struct VertexBuilder {
+    pub prim_index: u32,
+}
 
 impl FillVertexConstructor<Vertex> for VertexBuilder {
     fn new_vertex(&mut self, vertex: lyon::tessellation::FillVertex) -> Vertex {
         Vertex {
             position: [vertex.position().x, vertex.position().y], // z is zero for now
-            z_index: 1,
-            color: [0.0, 0.0, 0.0, 1.0], // make it black
-            tex_coords: [0.0, 0.0],      // no texture
+            prim_index: self.prim_index,
         }
     }
 }
@@ -50,25 +48,23 @@ unsafe impl bytemuck::Zeroable for Globals {}
 #[derive(Copy, Clone)]
 pub struct Primitive {
     pub color: [f32; 4],
+    pub tex_cords: [f32; 2],
     pub translate: [f32; 2],
     pub z_index: i32,
-    pub width: f32,
     pub angle: f32,
     pub scale: f32,
-    pub _pad1: i32,
-    pub _pad2: i32,
+    pub _pad: i32,
 }
 
 impl Primitive {
     const DEFAULT: Self = Primitive {
-        color: [1.0, 0.0, 0.0, 1.0],
+        color: [0.0, 0.0, 0.0, 1.0],
+        tex_cords: [0.0, 0.0],
         translate: [0.0; 2],
         z_index: 0,
-        width: 0.0,
         angle: 0.0,
         scale: 1.0,
-        _pad1: 0,
-        _pad2: 0,
+        _pad: 0,
     };
 }
 

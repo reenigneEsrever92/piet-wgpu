@@ -15,12 +15,12 @@ use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
     BindGroupDescriptor, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry,
-    BufferUsages, Extent3d,
+    BufferUsages, Extent3d, ShaderStages,
 };
 
 use crate::{
     config::Config,
-    data::{Globals, Vertex, VertexBuilder},
+    data::{Globals, Primitive, Vertex, VertexBuilder},
     error::Result,
     renderer::WgpuRenderer,
     PietWgpu, WgpuBrush, WgpuImage,
@@ -40,6 +40,9 @@ pub struct WgpuImmediateRenderer {
     num_vertecies: u64,
     index_buffer: wgpu::Buffer,
     num_indecies: u64,
+    prim_buffer: wgpu::Buffer,
+    prim_number: u32,
+    prim_buffer_bind_group_layout: BindGroupLayout,
     texture_buffer: wgpu::Texture, // one buffer for all images
     texture_sampler: wgpu::Sampler,
     texture_bind_group_layout: BindGroupLayout,
@@ -49,6 +52,7 @@ pub struct WgpuImmediateRenderer {
     surface_config: wgpu::SurfaceConfiguration,
     clear_color: wgpu::Color,
 }
+
 static_assertions::assert_impl_all!(WgpuImmediateRenderer: Send, Sync);
 
 impl WgpuImmediateRenderer {
@@ -103,7 +107,7 @@ impl WgpuImmediateRenderer {
                 label: Some("Global Bind Group Layout"),
                 entries: &[BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    visibility: ShaderStages::VERTEX_FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -130,20 +134,7 @@ impl WgpuImmediateRenderer {
         let vertex_buffer_layout = wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Uint32, 2 => Float32x4, 3 => Float32x2],
-            // shorthand for:
-            // &[
-            //     wgpu::VertexAttribute {
-            //         offset: 0,
-            //         shader_location: 0,
-            //         format: wgpu::VertexFormat::Float32x3,
-            //     },
-            //     wgpu::VertexAttribute {
-            //         offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
-            //         shader_location: 1,
-            //         format: wgpu::VertexFormat::Float32x4,
-            //     },
-            // ],
+            attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Uint32],
         };
 
         let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -153,11 +144,27 @@ impl WgpuImmediateRenderer {
             mapped_at_creation: false,
         });
 
-        // let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        //     label: Some("Vertex Buffer"),
-        //     contents: bytemuck::cast_slice(&[]),
-        //     usage: wgpu::BufferUsages::VERTEX,
-        // });
+        let prim_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Primitive Buffer"),
+            size: config.primitve_buffer_size,
+            usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let prim_buffer_bind_group_layout =
+            device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+                label: Some("Primitives Buffer Layout"),
+                entries: &[BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: NonZeroU64::new(std::mem::size_of::<Primitive>() as u64),
+                    },
+                    count: None,
+                }],
+            });
 
         let index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Index Buffer"),
@@ -166,13 +173,28 @@ impl WgpuImmediateRenderer {
             mapped_at_creation: false,
         });
 
-        // let index_buffer = self
-        //     .device
-        //     .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        //         label: Some("Index Buffer"),
-        //         contents: bytemuck::cast_slice(&self.geometry_buffer.indices),
-        //         usage: wgpu::BufferUsages::INDEX,
-        //     });
+        let texture_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[
+                    BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        },
+                        count: None,
+                    },
+                    BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+                label: Some("texture_bind_group_layout"),
+            });
 
         let texture_size = wgpu::Extent3d {
             // TODO use config
@@ -200,31 +222,6 @@ impl WgpuImmediateRenderer {
             mipmap_filter: wgpu::FilterMode::Nearest,
             ..Default::default()
         });
-
-        let texture_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                entries: &[
-                    BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            multisampled: false,
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        },
-                        count: None,
-                    },
-                    BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        // This should match the filterable field of the
-                        // corresponding Texture entry above.
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-                label: Some("texture_bind_group_layout"),
-            });
 
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -284,6 +281,9 @@ impl WgpuImmediateRenderer {
             num_vertecies: 0,
             index_buffer,
             num_indecies: 0,
+            prim_buffer,
+            prim_number: 0,
+            prim_buffer_bind_group_layout,
             texture_bind_group_layout,
             texture_buffer,
             texture_sampler,
@@ -332,7 +332,7 @@ impl WgpuImmediateRenderer {
         self.num_indecies += geometry.indices.len() as u64;
     }
 
-    fn tesselate_fill(&self, path: Path) -> VertexBuffers<Vertex, u16> {
+    fn tesselate_fill(&self, prim_index: u32, path: Path) -> VertexBuffers<Vertex, u16> {
         let mut tesselation_buffer = VertexBuffers::new();
         let mut fill_tess = FillTessellator::new();
 
@@ -340,7 +340,7 @@ impl WgpuImmediateRenderer {
             .tessellate(
                 &path,
                 &FillOptions::tolerance(0.02).with_fill_rule(lyon::tessellation::FillRule::NonZero),
-                &mut BuffersBuilder::new(&mut tesselation_buffer, VertexBuilder),
+                &mut BuffersBuilder::new(&mut tesselation_buffer, VertexBuilder { prim_index }),
             )
             .unwrap();
 
@@ -358,7 +358,14 @@ impl WgpuRenderer for WgpuImmediateRenderer {
         self.surface.configure(&self.device, &self.surface_config);
     }
 
+    fn set_scale(&mut self, scale_factor: f64) {
+        self.scale = scale_factor;
+    }
+
     fn fill_rect(&mut self, rect: Rect, brush: &WgpuBrush) {
+        let prim_index = self.prim_number;
+        self.prim_number += 1;
+
         let mut builder = Path::builder();
 
         builder.begin(point(rect.x0 as f32, rect.y0 as f32));
@@ -371,7 +378,59 @@ impl WgpuRenderer for WgpuImmediateRenderer {
         let path = builder.build();
 
         // tesselates geometries
-        let geometry = self.tesselate_fill(path);
+        let geometry = self.tesselate_fill(prim_index, path);
+
+        self.append_geometry(geometry);
+    }
+
+    fn draw_image(&mut self, rect: kurbo::Rect, image: &WgpuImage) {
+        let rgba_image = image.dynamic.as_rgba8().unwrap();
+        let prim_index = self.prim_number;
+        self.prim_number += 1;
+
+        let texture_size = wgpu::Extent3d {
+            width: rgba_image.width(),
+            height: rgba_image.height(),
+            depth_or_array_layers: 1,
+        };
+
+        // copy image data to image buffer
+        self.queue.write_texture(
+            // Tells wgpu where to copy the pixel data
+            wgpu::ImageCopyTexture {
+                texture: &self.texture_buffer,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            // The actual pixel data
+            rgba_image,
+            // The layout of the texture
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: std::num::NonZeroU32::new(4 * image.dynamic.width()),
+                rows_per_image: std::num::NonZeroU32::new(image.dynamic.height()),
+            },
+            texture_size,
+        );
+
+        let mut builder = Path::builder();
+
+        builder.begin(point(rect.x0 as f32, rect.y0 as f32));
+        builder.line_to(point(rect.x0 as f32, rect.y1 as f32));
+        builder.line_to(point(rect.x1 as f32, rect.y1 as f32));
+        builder.line_to(point(rect.x1 as f32, rect.y0 as f32));
+
+        builder.close();
+
+        let path = builder.build();
+
+        let mut geometry = self.tesselate_fill(prim_index, path);
+
+        let primitive = Primitive {
+            // TODO
+            ..Default::default()
+        };
 
         self.append_geometry(geometry);
     }
@@ -432,6 +491,17 @@ impl WgpuRenderer for WgpuImmediateRenderer {
             }],
         });
 
+        let prim_bind_group = self.device.create_bind_group(&BindGroupDescriptor {
+            label: Some("Primitives Bind Gorup"),
+            layout: &self.prim_buffer_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(
+                    self.prim_buffer.as_entire_buffer_binding(),
+                ),
+            }],
+        });
+
         // prepare render pass
         let mut render_pass = self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Render Pass"),
@@ -448,7 +518,8 @@ impl WgpuRenderer for WgpuImmediateRenderer {
 
         render_pass.set_pipeline(&self.pipeline);
         render_pass.set_bind_group(0, &globals_bind_group, &[]);
-        render_pass.set_bind_group(1, &texture_bind_group, &[]);
+        render_pass.set_bind_group(1, &prim_bind_group, &[]);
+        render_pass.set_bind_group(2, &texture_bind_group, &[]);
         render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
         render_pass.draw_indexed(0..self.num_indecies as u32, 0, 0..1);
@@ -472,73 +543,5 @@ impl WgpuRenderer for WgpuImmediateRenderer {
         output.present();
 
         Ok(())
-    }
-
-    fn draw_image(&mut self, rect: kurbo::Rect, image: &WgpuImage) {
-        let rgba_image = image.dynamic.as_rgba8().unwrap();
-
-        let texture_size = wgpu::Extent3d {
-            width: rgba_image.width(),
-            height: rgba_image.height(),
-            depth_or_array_layers: 1,
-        };
-
-        // copy image data to image buffer
-        self.queue.write_texture(
-            // Tells wgpu where to copy the pixel data
-            wgpu::ImageCopyTexture {
-                texture: &self.texture_buffer,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            // The actual pixel data
-            rgba_image,
-            // The layout of the texture
-            wgpu::ImageDataLayout {
-                offset: 0,
-                bytes_per_row: std::num::NonZeroU32::new(4 * image.dynamic.width()),
-                rows_per_image: std::num::NonZeroU32::new(image.dynamic.height()),
-            },
-            texture_size,
-        );
-
-        let mut builder = Path::builder();
-
-        builder.begin(point(rect.x0 as f32, rect.y0 as f32));
-        builder.line_to(point(rect.x0 as f32, rect.y1 as f32));
-        builder.line_to(point(rect.x1 as f32, rect.y1 as f32));
-        builder.line_to(point(rect.x1 as f32, rect.y0 as f32));
-
-        builder.close();
-
-        let path = builder.build();
-
-        let mut geometry = self.tesselate_fill(path);
-
-        // map tex_coords
-        let vertecies = geometry
-            .vertices
-            .iter()
-            .enumerate()
-            .map(|(index, vertex)| Vertex {
-                tex_coords: match index {
-                    0 => [0.0, 0.0],
-                    1 => [0.0, 1.0],
-                    2 => [1.0, 0.0],
-                    3 => [1.0, 1.0],
-                    _ => panic!(),
-                },
-                ..*vertex
-            })
-            .collect::<Vec<Vertex>>();
-
-        geometry.vertices = vertecies;
-
-        self.append_geometry(geometry);
-    }
-
-    fn set_scale(&mut self, scale_factor: f64) {
-        self.scale = scale_factor;
     }
 }
