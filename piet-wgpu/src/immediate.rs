@@ -450,7 +450,8 @@ impl WgpuRenderer for WgpuImmediateRenderer {
         let geometry = self.tesselate_fill(prim_index, path);
 
         let primitive = Primitive {
-            tex_coords: [0.0, 0.0, 1.0, 1.0],
+            lower_bound: [rect.x0 as f32, rect.y0 as f32],
+            upper_bound: [rect.x1 as f32, rect.y1 as f32],
             ..Default::default()
         };
 
