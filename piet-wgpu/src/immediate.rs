@@ -4,19 +4,18 @@ use std::{
     primitive,
 };
 
+use kurbo::Size;
 use lyon::{
-    lyon_tessellation::{
-        geometry_builder, BuffersBuilder, FillOptions, FillTessellator, VertexBuffers,
-    },
+    lyon_tessellation::{BuffersBuilder, FillOptions, FillTessellator, VertexBuffers},
     math::point,
-    path::{traits::PathBuilder, Path},
+    path::Path,
 };
-use piet::{kurbo::Rect, IntoBrush};
+use piet::kurbo::Rect;
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
     BindGroupDescriptor, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry,
-    BufferUsages, Extent3d, ShaderStages,
+    BufferUsages, ShaderStages,
 };
 
 use crate::{
@@ -52,6 +51,8 @@ pub struct WgpuImmediateRenderer {
     pipeline: wgpu::RenderPipeline,
     surface_config: wgpu::SurfaceConfiguration,
     clear_color: wgpu::Color,
+    current_texture_buffer_offset: u64,
+    config: Config,
 }
 
 static_assertions::assert_impl_all!(WgpuImmediateRenderer: Send, Sync);
@@ -152,6 +153,8 @@ impl WgpuImmediateRenderer {
             mapped_at_creation: false,
         });
 
+        let prim_size = std::mem::size_of::<Primitive>() as u64;
+
         let prim_buffer_bind_group_layout =
             device.create_bind_group_layout(&BindGroupLayoutDescriptor {
                 label: Some("Primitives Buffer Layout"),
@@ -161,7 +164,7 @@ impl WgpuImmediateRenderer {
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
-                        min_binding_size: NonZeroU64::new(std::mem::size_of::<Primitive>() as u64),
+                        min_binding_size: NonZeroU64::new(prim_size),
                     },
                     count: None,
                 }],
@@ -198,9 +201,8 @@ impl WgpuImmediateRenderer {
             });
 
         let texture_size = wgpu::Extent3d {
-            // TODO use config
-            width: 4 * 256,
-            height: 256,
+            width: config.texture_buffer_dimensions.0,
+            height: config.texture_buffer_dimensions.1,
             depth_or_array_layers: 1,
         };
 
@@ -295,6 +297,8 @@ impl WgpuImmediateRenderer {
             globals_buffer,
             globals_bind_group_layout,
             clear_color,
+            current_texture_buffer_offset: 0,
+            config,
         })
     }
 
@@ -416,6 +420,9 @@ impl WgpuRenderer for WgpuImmediateRenderer {
             depth_or_array_layers: 1,
         };
 
+        let bytes_per_row = 4 * image.dynamic.width();
+        let rows_per_image = image.dynamic.height();
+
         // copy image data to image buffer
         self.queue.write_texture(
             // Tells wgpu where to copy the pixel data
@@ -430,11 +437,14 @@ impl WgpuRenderer for WgpuImmediateRenderer {
             // The layout of the texture
             wgpu::ImageDataLayout {
                 offset: 0,
-                bytes_per_row: std::num::NonZeroU32::new(4 * image.dynamic.width()),
-                rows_per_image: std::num::NonZeroU32::new(image.dynamic.height()),
+                bytes_per_row: std::num::NonZeroU32::new(bytes_per_row),
+                rows_per_image: std::num::NonZeroU32::new(rows_per_image),
             },
             texture_size,
         );
+
+        self.current_texture_buffer_offset +=
+            (bytes_per_row * self.config.texture_buffer_dimensions.1) as u64;
 
         let mut builder = Path::builder();
 
@@ -449,9 +459,11 @@ impl WgpuRenderer for WgpuImmediateRenderer {
 
         let geometry = self.tesselate_fill(prim_index, path);
 
+        // TODO manage texture buffer correctly
         let primitive = Primitive {
             lower_bound: [rect.x0 as f32, rect.y0 as f32],
             upper_bound: [rect.x1 as f32, rect.y1 as f32],
+            tex_coords: [0.0, 0.0, 1.0, 1.0],
             ..Default::default()
         };
 
@@ -501,7 +513,7 @@ impl WgpuRenderer for WgpuImmediateRenderer {
                 self.surface_config.height as f32,
             ],
             scale_factor: self.scale as f32,
-            _pad: 0.0,
+            _pad: 0,
         };
 
         let globals_bind_group = self.device.create_bind_group(&BindGroupDescriptor {

@@ -6,8 +6,6 @@ edition = "2021"
 
 [dependencies]
 log = "0.4.14"
-linked-hash-map = "0.5.4"
-pathfinder_geometry = "0.5.1"
 lyon = "1.0"
 piet = "0.5.0"
 wgpu = { version = "0.14", features = ["spirv"] }

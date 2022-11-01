@@ -5,30 +5,23 @@ use lyon::lyon_tessellation::FillVertexConstructor;
 pub struct Vertex {
     pub position: [f32; 2],
     pub prim_index: u32,
+    pub _pad: u32,
 }
 
 unsafe impl bytemuck::Pod for Vertex {}
 unsafe impl bytemuck::Zeroable for Vertex {}
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug)]
-pub struct TexVertex {
-    pub position: [f32; 3],
-}
-
-unsafe impl bytemuck::Pod for TexVertex {}
-unsafe impl bytemuck::Zeroable for TexVertex {}
-
-// this one is needed by lyon for tessellation
 pub struct VertexBuilder {
     pub prim_index: u32,
 }
 
+// this one is needed by lyon for inverting construction
 impl FillVertexConstructor<Vertex> for VertexBuilder {
     fn new_vertex(&mut self, vertex: lyon::tessellation::FillVertex) -> Vertex {
         Vertex {
             position: [vertex.position().x, vertex.position().y], // z is zero for now
             prim_index: self.prim_index,
+            _pad: 0,
         }
     }
 }
@@ -38,7 +31,8 @@ impl FillVertexConstructor<Vertex> for VertexBuilder {
 pub struct Globals {
     pub resolution: [f32; 2],
     pub scale_factor: f32,
-    pub _pad: f32, // required by bind group layout
+    // pub tex_dims: [f32; 4],
+    pub _pad: u32,
 }
 
 unsafe impl bytemuck::Pod for Globals {}
@@ -52,12 +46,10 @@ pub struct Primitive {
     pub color: [f32; 4],       // 16
     pub tex_coords: [f32; 4],  // 16
     pub translate: [f32; 2],   // 8
-    pub z_index: i32,          // 4
     pub angle: f32,            // 4
     pub scale: f32,            // 4
-    pub _pad1: u32,            // 4
-    pub _pad2: u32,            // 4
-    pub _pad3: u32,            // 4
+    pub z_index: i32,          // 4
+    pub _pad: [u32; 3],        // 12
                                // 80
 }
 
@@ -68,12 +60,10 @@ impl Primitive {
         color: [0.0, 0.0, 0.0, 1.0],
         tex_coords: [0.0, 0.0, 0.0, 0.0],
         translate: [0.0; 2],
-        z_index: 0,
         angle: 0.0,
         scale: 1.0,
-        _pad1: 0,
-        _pad2: 0,
-        _pad3: 0,
+        z_index: 0,
+        _pad: [0, 0, 0],
     };
 }
 
