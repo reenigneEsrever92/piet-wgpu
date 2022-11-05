@@ -12,7 +12,7 @@ impl Default for Config {
         Self {
             vertex_buffer_size: std::mem::size_of::<Vertex>() as u64 * 1024, // one Vertex is currently 28 bytes
             index_buffer_size: std::mem::size_of::<u16>() as u64 * 4096,     // indicies are u16
-            texture_buffer_dimensions: Dimensions(256, 256),
+            texture_buffer_dimensions: Dimensions(2048, 2048),
             primitve_buffer_size: std::mem::size_of::<Primitive>() as u64 * 512,
         }
     }

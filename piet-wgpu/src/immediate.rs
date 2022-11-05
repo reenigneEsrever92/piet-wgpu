@@ -463,7 +463,12 @@ impl WgpuRenderer for WgpuImmediateRenderer {
         let primitive = Primitive {
             lower_bound: [rect.x0 as f32, rect.y0 as f32],
             upper_bound: [rect.x1 as f32, rect.y1 as f32],
-            tex_coords: [0.0, 0.0, 1.0, 1.0],
+            tex_coords: [
+                0.0,
+                0.0,
+                rgba_image.width() as f32 / self.config.texture_buffer_dimensions.0 as f32,
+                rgba_image.height() as f32 / self.config.texture_buffer_dimensions.1 as f32,
+            ],
             ..Default::default()
         };
 

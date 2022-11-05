@@ -6,6 +6,7 @@ fn main() {
         let image = WgpuImage::from_bytes(include_bytes!("../resources/img/happy-tree.png"));
         let darth_vader = WgpuImage::from_bytes(include_bytes!("../resources/img/darth_vader.png"));
         let fire = WgpuImage::from_bytes(include_bytes!("../resources/img/fire.png"));
+
         renderer.draw_image(
             &image,
             Rect::new(0.0, 0.0, 200.0, 200.0),
