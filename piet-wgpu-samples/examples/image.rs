@@ -17,10 +17,10 @@ fn main() {
             Rect::new(200.0, 200.0, 400.0, 400.0),
             piet::InterpolationMode::NearestNeighbor,
         );
-        renderer.draw_image(
-            &fire,
-            Rect::new(400.0, 400.0, 600.0, 600.0),
-            piet::InterpolationMode::NearestNeighbor,
-        );
+        // renderer.draw_image(
+        //     &fire,
+        //     Rect::new(400.0, 400.0, 600.0, 600.0),
+        //     piet::InterpolationMode::NearestNeighbor,
+        // );
     });
 }

@@ -4,7 +4,7 @@ use std::{
     primitive,
 };
 
-use kurbo::Size;
+use kurbo::{Size, Vec2};
 use lyon::{
     lyon_tessellation::{BuffersBuilder, FillOptions, FillTessellator, VertexBuffers},
     math::point,
@@ -19,11 +19,11 @@ use wgpu::{
 };
 
 use crate::{
+    buffer_layout::BufferLayout2D,
     config::Config,
     data::{Globals, Primitive, Vertex, VertexBuilder},
     error::Result,
     renderer::WgpuRenderer,
-    texture::WgpuTexture,
     PietWgpu, WgpuBrush, WgpuImage,
 };
 
@@ -47,6 +47,7 @@ pub struct WgpuImmediateRenderer {
     texture_buffer: wgpu::Texture, // one buffer for all images
     texture_sampler: wgpu::Sampler,
     texture_bind_group_layout: BindGroupLayout,
+    texture_buffer_layout: BufferLayout2D,
     globals_buffer: wgpu::Buffer,
     globals_bind_group_layout: BindGroupLayout,
     pipeline: wgpu::RenderPipeline,
@@ -178,9 +179,11 @@ impl WgpuImmediateRenderer {
             mapped_at_creation: false,
         });
 
+        let texture_buffer_layout = BufferLayout2D::new(&config);
+
         let texture_size = wgpu::Extent3d {
-            width: config.texture_buffer_dimensions.0,
-            height: config.texture_buffer_dimensions.1,
+            width: config.texture_buffer_dimensions.x as u32,
+            height: config.texture_buffer_dimensions.y as u32,
             depth_or_array_layers: 1,
         };
 
@@ -292,6 +295,8 @@ impl WgpuImmediateRenderer {
             prim_buffer,
             prim_number: 0,
             prim_buffer_bind_group_layout,
+            texture_buffer,
+            texture_buffer_layout,
             texture_bind_group_layout,
             texture_sampler,
             globals_buffer,
@@ -423,6 +428,39 @@ impl WgpuRenderer for WgpuImmediateRenderer {
         let bytes_per_row = 4 * image.dynamic.width();
         let rows_per_image = image.dynamic.height();
 
+        let mut builder = Path::builder();
+
+        builder.begin(point(rect.x0 as f32, rect.y0 as f32));
+        builder.line_to(point(rect.x0 as f32, rect.y1 as f32));
+        builder.line_to(point(rect.x1 as f32, rect.y1 as f32));
+        builder.line_to(point(rect.x1 as f32, rect.y0 as f32));
+
+        builder.close();
+
+        let path = builder.build();
+
+        let geometry = self.tesselate_fill(prim_index, path);
+
+        let buffer_pos = self
+            .texture_buffer_layout
+            .search_and_allocate(Vec2 {
+                x: rgba_image.width() as f64,
+                y: rgba_image.height() as f64,
+            })
+            .expect("Not enough free space for texture in buffer");
+
+        let primitive = Primitive {
+            lower_bound: [rect.x0 as f32, rect.y0 as f32],
+            upper_bound: [rect.x1 as f32, rect.y1 as f32],
+            tex_coords: [
+                (buffer_pos.x0 / self.config.texture_buffer_dimensions.x) as f32,
+                (buffer_pos.y0 / self.config.texture_buffer_dimensions.y) as f32,
+                (rgba_image.width() as f64 / self.config.texture_buffer_dimensions.x) as f32,
+                (rgba_image.height() as f64 / self.config.texture_buffer_dimensions.y) as f32,
+            ],
+            ..Default::default()
+        };
+
         // copy image data to image buffer
         self.queue.write_texture(
             // Tells wgpu where to copy the pixel data
@@ -442,35 +480,6 @@ impl WgpuRenderer for WgpuImmediateRenderer {
             },
             texture_size,
         );
-
-        self.current_texture_buffer_offset +=
-            (bytes_per_row * self.config.texture_buffer_dimensions.1) as u64;
-
-        let mut builder = Path::builder();
-
-        builder.begin(point(rect.x0 as f32, rect.y0 as f32));
-        builder.line_to(point(rect.x0 as f32, rect.y1 as f32));
-        builder.line_to(point(rect.x1 as f32, rect.y1 as f32));
-        builder.line_to(point(rect.x1 as f32, rect.y0 as f32));
-
-        builder.close();
-
-        let path = builder.build();
-
-        let geometry = self.tesselate_fill(prim_index, path);
-
-        // TODO manage texture buffer correctly
-        let primitive = Primitive {
-            lower_bound: [rect.x0 as f32, rect.y0 as f32],
-            upper_bound: [rect.x1 as f32, rect.y1 as f32],
-            tex_coords: [
-                0.0,
-                0.0,
-                rgba_image.width() as f32 / self.config.texture_buffer_dimensions.0 as f32,
-                rgba_image.height() as f32 / self.config.texture_buffer_dimensions.1 as f32,
-            ],
-            ..Default::default()
-        };
 
         self.append_geometry(geometry);
         self.append_prim(primitive)

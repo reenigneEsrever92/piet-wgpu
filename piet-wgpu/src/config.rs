@@ -17,12 +17,9 @@ impl Default for Config {
             index_buffer_size: std::mem::size_of::<u16>() as u64 * 4096,     // indicies are u16
             texture_buffer_dimensions: Vec2 {
                 x: 2048.0,
-                y: 2084.0,
+                y: 512.0,
             },
             primitve_buffer_size: std::mem::size_of::<Primitive>() as u64 * 512,
         }
     }
 }
-
-#[derive(Clone, Debug)]
-pub struct Dimensions(pub u32, pub u32);

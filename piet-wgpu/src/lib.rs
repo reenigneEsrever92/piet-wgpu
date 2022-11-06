@@ -1,10 +1,10 @@
+mod buffer_layout;
 mod config;
 mod data;
 mod error;
 pub mod immediate;
 mod renderer;
 mod text;
-mod texture;
 
 use std::{borrow::Cow, ops::Deref};
 
