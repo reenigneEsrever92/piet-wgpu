@@ -2,13 +2,13 @@ mod buffer_layout;
 mod config;
 mod data;
 mod error;
+mod image;
 pub mod immediate;
 mod renderer;
 mod text;
 
 use std::{borrow::Cow, ops::Deref};
 
-use image::{DynamicImage, GenericImageView};
 pub use piet::kurbo::*;
 pub use piet::*;
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};

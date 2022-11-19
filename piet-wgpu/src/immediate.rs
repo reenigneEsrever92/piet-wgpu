@@ -4,6 +4,7 @@ use std::{
     primitive,
 };
 
+use image::buffer;
 use kurbo::{Size, Vec2};
 use lyon::{
     lyon_tessellation::{BuffersBuilder, FillOptions, FillTessellator, VertexBuffers},
@@ -15,7 +16,7 @@ use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
     BindGroupDescriptor, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry,
-    BufferUsages, ShaderStages,
+    BufferUsages, ImageCopyBuffer, ImageCopyTexture, ShaderStages,
 };
 
 use crate::{
@@ -461,7 +462,31 @@ impl WgpuRenderer for WgpuImmediateRenderer {
             ..Default::default()
         };
 
-        // copy image data to image buffer
+        // copy image data to texture buffer
+        let copy_buffer = self.device.create_buffer_init(&BufferInitDescriptor {
+            label: Some("Texture Copy Buffer"),
+            contents: rgba_image,
+            usage: BufferUsages::COPY_SRC,
+        });
+
+        self.encoder.copy_buffer_to_texture(
+            ImageCopyBuffer {
+                buffer: &copy_buffer,
+                layout: wgpu::ImageDataLayout {
+                    offset: 1,
+                    bytes_per_row: NonZeroU32::new(bytes_per_row),
+                    rows_per_image: NonZeroU32::new(rows_per_image),
+                },
+            },
+            ImageCopyTexture {
+                texture: &self.texture_buffer,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            texture_size,
+        );
+
         self.queue.write_texture(
             // Tells wgpu where to copy the pixel data
             wgpu::ImageCopyTexture {
